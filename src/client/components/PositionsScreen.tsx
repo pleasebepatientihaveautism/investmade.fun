@@ -182,12 +182,21 @@ export function PositionsScreen({
 }
 
 function walletTransaction(call: WalletCall) {
+  const { transaction } = call;
+  const hasEip1559Fees = Boolean(transaction.maxFeePerGas && transaction.maxPriorityFeePerGas);
   return {
-    from: call.transaction.from,
-    to: call.transaction.to,
-    data: call.transaction.data,
-    value: toHex(call.transaction.value),
-    ...(call.transaction.gasLimit ? { gas: toHex(call.transaction.gasLimit) } : {})
+    from: transaction.from,
+    to: transaction.to,
+    data: transaction.data,
+    value: toHex(transaction.value),
+    ...(transaction.gasLimit ? { gas: toHex(transaction.gasLimit) } : {}),
+    ...(hasEip1559Fees && transaction.maxFeePerGas
+      ? { maxFeePerGas: toHex(transaction.maxFeePerGas) }
+      : {}),
+    ...(hasEip1559Fees && transaction.maxPriorityFeePerGas
+      ? { maxPriorityFeePerGas: toHex(transaction.maxPriorityFeePerGas) }
+      : {}),
+    ...(!hasEip1559Fees && transaction.gasPrice ? { gasPrice: toHex(transaction.gasPrice) } : {})
   };
 }
 

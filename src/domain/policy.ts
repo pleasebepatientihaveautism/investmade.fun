@@ -4,12 +4,13 @@ import {
   MAX_PRICE_IMPACT_BPS,
   PERIOD_BUDGET,
   POLICY_VERSION,
-  QUOTE_TTL_SECONDS,
-  USDG_DECIMALS
+  QUOTE_TTL_SECONDS
 } from "./constants.js";
 import { sha256 } from "./canonical.js";
 import {
   feedOutputSchema,
+  ticketSizeToBaseUnits,
+  TICKET_SIZE_INCREMENT_BASE_UNITS,
   type Candidate,
   type ExecutionRequest,
   type FeedInput,
@@ -97,9 +98,10 @@ export function validateExecutionSelection(
   const seen = new Set<string>();
   let total = 0n;
   const slot = BigInt(request.selections[0]?.amountInBaseUnits ?? "0");
-  const unit = 10n ** BigInt(USDG_DECIMALS);
-  if (slot < unit || slot > PERIOD_BUDGET || slot % unit !== 0n) {
-    throw new PolicyError("INVALID_SLOT_SIZE", "Ticket size must be a whole USDG amount from 1 to 100.");
+  const minTicket = ticketSizeToBaseUnits(0.1);
+  const increment = TICKET_SIZE_INCREMENT_BASE_UNITS;
+  if (slot < minTicket || slot > PERIOD_BUDGET || slot % increment !== 0n) {
+    throw new PolicyError("INVALID_SLOT_SIZE", "Ticket size must be from 0.10 to 100.00 USDG in 0.01 increments.");
   }
 
   for (const selection of request.selections) {

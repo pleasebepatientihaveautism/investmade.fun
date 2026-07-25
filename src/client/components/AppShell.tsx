@@ -55,7 +55,9 @@ export function AppShell({
       </header>
       {children}
       <footer className="logo-attribution">
-        <a href="https://www.allinvestview.com/tools/ticker-logos/">Logos by AllInvestView</a>
+        <a href="https://www.coingecko.com/en/api">Crypto icons by CoinGecko</a>
+        <span> · </span>
+        <a href="https://www.allinvestview.com/tools/ticker-logos/">Stock logos by AllInvestView</a>
       </footer>
     </div>
   );

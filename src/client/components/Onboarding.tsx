@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConnectOrCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import { IDKit, orbLegacy } from "@worldcoin/idkit-core";
-import type { OnboardingPreferences } from "../../domain/schemas";
+import { isTicketSizeUsd, type OnboardingPreferences } from "../../domain/schemas";
 import type { PublicConfig } from "../api";
 import { api } from "../api";
 import { ArrowRight, Check, Shield } from "./Icons";
@@ -41,7 +41,7 @@ const TICKET_OPTIONS: Array<{ id: TicketChoice; title: string; description: stri
   { id: 2, title: "$2", description: "Small test-sized allocation per accepted card." },
   { id: 10, title: "$10", description: "Balanced default allocation per accepted card." },
   { id: 25, title: "$25", description: "Larger allocation with up to four accepted cards." },
-  { id: "custom", title: "Another amount", description: "Choose a whole-dollar amount from $1 to $100." }
+  { id: "custom", title: "Another amount", description: "Choose $0.10 to $100.00, including cents." }
 ];
 
 const RISK_OPTIONS: Array<{
@@ -106,6 +106,7 @@ export function Onboarding({
   const { connectOrCreateWallet } = useConnectOrCreateWallet();
   const { wallets } = useWallets();
   const activeWallet = wallets.find((candidate) => candidate.linked) ?? wallets[0];
+  const requiresWorldVerification = config.executionMode === "live";
   const wallet = activeWallet?.address.toLowerCase() ?? "";
   const [step, setStep] = useState<Step>(storedPreferences ? "wallet" : "welcome");
   const [draft, setDraft] = useState<PreferenceDraft>(() =>
@@ -136,7 +137,7 @@ export function Onboarding({
   useEffect(() => {
     if (step !== "wallet" || !completedPreferences) return;
     if (!authenticated || !activeWallet?.linked) return;
-    if (!config.demoMode) {
+    if (requiresWorldVerification) {
       setStep("world");
       return;
     }
@@ -153,8 +154,8 @@ export function Onboarding({
     activeWallet,
     authenticated,
     completedPreferences,
-    config.demoMode,
     onComplete,
+    requiresWorldVerification,
     step
   ]);
 
@@ -173,7 +174,7 @@ export function Onboarding({
       }
       if (!activeWallet.linked) await activeWallet.loginOrLink();
       await activeWallet.switchChain(4663);
-      if (!config.demoMode) setStep("world");
+      if (requiresWorldVerification) setStep("world");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Privy wallet authentication failed.");
     } finally {
@@ -380,7 +381,7 @@ function QuestionFlow({
         <>
           <span className="onboarding-kicker">Ticket size</span>
           <h2>How much per accepted card?</h2>
-          <p>Choose $2, $10, $25, or enter another whole-dollar amount.</p>
+          <p>Choose $2, $10, $25, or enter another amount such as $0.10 or $0.25.</p>
           <div className="question-options ticket-options">
             {TICKET_OPTIONS.map((option) => (
               <button
@@ -406,10 +407,10 @@ function QuestionFlow({
               <span>Custom ticket size</span>
               <span><b>$</b><input
                 type="number"
-                min="1"
+                min="0.1"
                 max="100"
-                step="1"
-                inputMode="numeric"
+                step="0.01"
+                inputMode="decimal"
                 value={draft.customTicketInput}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -419,10 +420,10 @@ function QuestionFlow({
                     ticketSizeUsd: customTicket(value)
                   }));
                 }}
-                placeholder="1–100"
+                placeholder="0.10–100.00"
                 aria-describedby="custom-ticket-help"
               /></span>
-              <small id="custom-ticket-help">Whole USDG amount, minimum $1 and maximum $100.</small>
+              <small id="custom-ticket-help">USDG amount from $0.10 to $100.00, in $0.01 increments.</small>
             </label>
           ) : null}
           <QuestionActions
@@ -631,9 +632,7 @@ function readStoredPreferences(): OnboardingPreferences | undefined {
       stored?.version !== 2 ||
       !preferences ||
       !["daily", "weekly", "monthly"].includes(String(preferences.cadence)) ||
-      !Number.isInteger(preferences.ticketSizeUsd) ||
-      Number(preferences.ticketSizeUsd) < 1 ||
-      Number(preferences.ticketSizeUsd) > 100 ||
+      !isTicketSizeUsd(Number(preferences.ticketSizeUsd)) ||
       !["conservative", "balanced", "degen"].includes(String(preferences.riskMode)) ||
       !Array.isArray(preferences.assetClasses) ||
       preferences.assetClasses.length < 1 ||
@@ -652,7 +651,8 @@ function readStoredPreferences(): OnboardingPreferences | undefined {
 
 function customTicket(value: string): number | undefined {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : undefined;
+  const rounded = Math.round(parsed * 100) / 100;
+  return isTicketSizeUsd(rounded) ? rounded : undefined;
 }
 
 function isPresetTicket(value: number): value is 2 | 10 | 25 {

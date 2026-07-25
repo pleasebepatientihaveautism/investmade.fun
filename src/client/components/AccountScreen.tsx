@@ -1,36 +1,22 @@
-import { encodeFunctionData, formatUnits } from "viem";
+import { formatUnits } from "viem";
 import { useEffect, useState } from "react";
-import { useWallets } from "@privy-io/react-auth";
-import { USDG_ADDRESS } from "../../domain/constants";
 import type { OnboardingPreferences } from "../../domain/schemas";
+import { formatTicketSizeUsd, isTicketSizeUsd } from "../../domain/schemas";
+import { api } from "../api";
 
 const ACCOUNT_PREFERENCES_KEY = "investmade:onboarding:v2";
-const USDG_BALANCE_OF_ABI = [
-  {
-    type: "function",
-    name: "balanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }]
-  }
-] as const;
-
 const CADENCE_OPTIONS = ["daily", "weekly", "monthly"] as const;
 const RISK_OPTIONS = ["conservative", "balanced", "degen"] as const;
 
 export function AccountScreen({
   wallet,
   preferences,
-  demoMode,
   onSave
 }: {
   wallet: string;
   preferences: OnboardingPreferences;
-  demoMode: boolean;
   onSave: (preferences: OnboardingPreferences) => Promise<void>;
 }) {
-  const { wallets } = useWallets();
-  const activeWallet = wallets.find((candidate) => candidate.linked);
   const [draft, setDraft] = useState(preferences);
   const [balance, setBalance] = useState<string>();
   const [balanceError, setBalanceError] = useState("");
@@ -40,30 +26,13 @@ export function AccountScreen({
   useEffect(() => setDraft(preferences), [preferences]);
 
   useEffect(() => {
-    if (demoMode || !wallet || !activeWallet) return;
+    if (!wallet) return;
     let cancelled = false;
-    activeWallet
-      .getEthereumProvider()
-      .then(async (provider) => {
-        const chainId = (await provider.request({ method: "eth_chainId" })) as string;
-        if (Number.parseInt(chainId, 16) !== 4663) {
-          throw new Error("Switch your wallet to Robinhood Chain to view your USDG balance.");
-        }
-        const value = (await provider.request({
-          method: "eth_call",
-          params: [
-            {
-              to: USDG_ADDRESS,
-              data: encodeFunctionData({
-                abi: USDG_BALANCE_OF_ABI,
-                functionName: "balanceOf",
-                args: [wallet as `0x${string}`]
-              })
-            },
-            "latest"
-          ]
-        })) as string;
-        if (!cancelled) setBalance(formatUnits(BigInt(value), 6));
+    setBalance(undefined);
+    setBalanceError("");
+    api.usdgBalance(wallet)
+      .then(({ balanceBaseUnits, decimals }) => {
+        if (!cancelled) setBalance(formatUnits(BigInt(balanceBaseUnits), decimals));
       })
       .catch((caught) => {
         if (!cancelled) setBalanceError(caught instanceof Error ? caught.message : "Could not read USDG balance.");
@@ -71,7 +40,7 @@ export function AccountScreen({
     return () => {
       cancelled = true;
     };
-  }, [activeWallet, demoMode, wallet]);
+  }, [wallet]);
 
   async function save() {
     setSaveError("");
@@ -98,8 +67,8 @@ export function AccountScreen({
       <section className="account-balance" aria-label="USDG balance">
         <div>
           <span className="account-label">USDG balance</span>
-          <strong>{demoMode ? "—" : balance === undefined ? "Loading…" : `${balance} USDG`}</strong>
-          <small>{demoMode ? "Demo mode does not invent wallet balances." : balanceError || "Robinhood Chain · wallet-owned funds"}</small>
+          <strong>{balance === undefined ? (balanceError ? "—" : "Loading…") : `${balance} USDG`}</strong>
+          <small>{balanceError || "Live Robinhood Chain balance via Alchemy"}</small>
         </div>
         <code>{wallet ? `${wallet.slice(0, 10)}…${wallet.slice(-8)}` : "Wallet not connected"}</code>
       </section>
@@ -123,8 +92,8 @@ export function AccountScreen({
 
         <label className="settings-field">
           <span>Ticket size per accepted card</span>
-          <div className="ticket-input"><b>$</b><input type="number" min="1" max="100" step="1" value={draft.ticketSizeUsd} onChange={(event) => setDraft((current) => ({ ...current, ticketSizeUsd: clampTicket(event.target.value) }))} /></div>
-          <small>Whole-dollar USDG amount, from $1 to $100.</small>
+          <div className="ticket-input"><b>$</b><input type="number" min="0.1" max="100" step="0.01" inputMode="decimal" value={formatTicketSizeUsd(draft.ticketSizeUsd)} onChange={(event) => setDraft((current) => ({ ...current, ticketSizeUsd: clampTicket(event.target.value) }))} /></div>
+          <small>USDG amount from $0.10 to $100.00, in $0.01 increments.</small>
         </label>
 
         <fieldset className="settings-field">
@@ -176,7 +145,8 @@ export function AccountScreen({
 }
 
 function clampTicket(value: string) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.max(1, Math.min(100, parsed));
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0.1;
+  const rounded = Math.round(parsed * 100) / 100;
+  return isTicketSizeUsd(rounded) ? rounded : Math.max(0.1, Math.min(100, rounded));
 }

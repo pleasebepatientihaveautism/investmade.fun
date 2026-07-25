@@ -159,4 +159,9 @@ export const STOCK_LOGO_DOMAINS: Record<string, string> = {
   PLTR: "palantir.com"
 };
 
+/** CoinGecko IDs for crypto assets supported by the current Robinhood Chain registry. */
+export const COINGECKO_COIN_IDS: Record<string, string> = {
+  WETH: "weth"
+};
+
 export type RegistryAsset = (typeof ASSET_REGISTRY)[keyof typeof ASSET_REGISTRY];

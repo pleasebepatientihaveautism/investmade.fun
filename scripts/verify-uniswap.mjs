@@ -44,7 +44,8 @@ const response = await fetch("https://trade-api.gateway.uniswap.org/v1/quote", {
   headers: {
     "Content-Type": "application/json",
     "x-api-key": apiKey,
-    "x-universal-router-version": "2.1.1"
+    "x-universal-router-version": "2.1.1",
+    "x-permit2-disabled": "true"
   },
   body: JSON.stringify({
     type: "EXACT_INPUT",
@@ -67,6 +68,54 @@ const amountOut =
   quote.orderInfo?.outputs?.[0]?.startAmount ??
   null;
 
+let approvalResponse;
+let swapResponse;
+let swapBody;
+if (response.ok) {
+  approvalResponse = await fetch("https://trade-api.gateway.uniswap.org/v1/check_approval", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "x-permit2-disabled": "true"
+    },
+    body: JSON.stringify({
+      walletAddress: wallet,
+      token: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      amount: "10000000",
+      chainId: 4663
+    }),
+    signal: AbortSignal.timeout(15_000)
+  });
+  swapResponse = await fetch("https://trade-api.gateway.uniswap.org/v1/swap", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "x-universal-router-version": "2.1.1",
+      "x-permit2-disabled": "true"
+    },
+    body: JSON.stringify({
+      quote: body.quote,
+      refreshGasPrice: false,
+      simulateTransaction: false,
+      safetyMode: "SAFE",
+      deadline: Math.floor(Date.now() / 1000) + 60
+    }),
+    signal: AbortSignal.timeout(15_000)
+  });
+  swapBody = await swapResponse.json();
+}
+const swap = swapBody?.swap;
+const swapCalldataValid = Boolean(
+  swapResponse?.ok &&
+  /^0x[a-fA-F0-9]{40}$/.test(swap?.to ?? "") &&
+  /^0x[a-fA-F0-9]{40}$/.test(swap?.from ?? "") &&
+  typeof swap?.data === "string" &&
+  swap.data.length > 2 &&
+  Number(swap?.chainId) === 4663
+);
+
 console.log(
   JSON.stringify({
     authenticated: response.status !== 401 && response.status !== 403,
@@ -78,8 +127,20 @@ console.log(
     routing: body.routing ?? null,
     requestIdPresent: typeof body.requestId === "string",
     outputAmountPresent: Boolean(amountOut),
+    quoteIdPresent: typeof quote.quoteId === "string",
+    quoteChainId: quote.chainId ?? null,
+    quoteInputTokenPresent: typeof quote.input?.token === "string",
+    quoteOutputTokenPresent: typeof quote.output?.token === "string",
+    permitDataPresent: Boolean(body.permitData),
+    approvalCheckPassed: approvalResponse?.ok ?? false,
+    swapSimulationPassed: swapResponse?.ok ?? false,
+    swapCalldataValid,
+    swapHttpStatus: swapResponse?.status ?? null,
+    swapErrorCode: swapResponse?.ok
+      ? null
+      : swapBody?.errorCode ?? swapBody?.error ?? swapBody?.code ?? "UNKNOWN",
     errorCode: response.ok ? null : body.errorCode ?? body.error ?? body.code ?? "UNKNOWN"
   })
 );
 
-if (!response.ok) process.exitCode = 1;
+if (!response.ok || !approvalResponse?.ok || !swapResponse?.ok || !swapCalldataValid) process.exitCode = 1;

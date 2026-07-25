@@ -4,6 +4,7 @@ import type {
   FeedOutput,
   OnboardingPreferences
 } from "../domain/schemas";
+import { ticketSizeToBaseUnits } from "../domain/schemas";
 
 export interface WeeklySession {
   id: string;
@@ -63,10 +64,22 @@ export interface ExitPreparation {
 
 export interface PublicConfig {
   demoMode: boolean;
+  executionMode: "demo" | "local-live" | "live";
   chainId: 4663;
   stableToken: "USDG";
   privy: { appId: string };
   world: null | { appId: string; rpId: string; action: string };
+}
+
+export interface AssetIconsResponse {
+  icons: Record<string, string>;
+}
+
+export interface TokenBalanceResponse {
+  asset: "USDG";
+  chainId: 4663;
+  decimals: number;
+  balanceBaseUnits: string;
 }
 
 let authProvider:
@@ -99,6 +112,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   config: () => request<PublicConfig>("/api/config"),
+  assetIcons: () => request<AssetIconsResponse>("/api/assets/icons"),
+  usdgBalance: (wallet: string) => request<TokenBalanceResponse>(`/api/balances/${encodeURIComponent(wallet)}/usdg`),
   worldSignature: () =>
     request<{
       sig: string;
@@ -133,7 +148,7 @@ export const api = {
         inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
         selections: assetIds.map((assetId) => ({
           assetId,
-          amountInBaseUnits: String(ticketSizeUsd * 1_000_000)
+          amountInBaseUnits: ticketSizeToBaseUnits(ticketSizeUsd).toString()
         })),
         slippageBps: 50
       })

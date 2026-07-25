@@ -11,6 +11,8 @@ import { ReceiptScreen } from "./components/ReceiptScreen";
 import { Onboarding } from "./components/Onboarding";
 import { PositionsScreen } from "./components/PositionsScreen";
 import { AccountScreen } from "./components/AccountScreen";
+import { AssetIconProvider } from "./components/AssetMark";
+import { Confetti } from "./components/magicui/confetti";
 import type { OnboardingPreferences } from "../domain/schemas";
 
 type View = "week" | "positions" | "receipts" | "account";
@@ -117,7 +119,8 @@ export function App({ config }: { config: PublicConfig }) {
   }
 
   return (
-    <AppShell
+    <AssetIconProvider>
+      <AppShell
       active={view}
       onNavigate={navigate}
       wallet={wallet}
@@ -131,7 +134,18 @@ export function App({ config }: { config: PublicConfig }) {
           privyReady={privyReady && walletsReady}
         />
       ) : view === "receipts" ? (
-        <ReceiptScreen record={settlement} selected={selected} feed={feed} />
+        <ReceiptScreen
+          record={settlement}
+          selected={selected}
+          feed={feed}
+          demoMode={config.demoMode}
+          onStartNextBasket={() => {
+            if (preferences) {
+              void loadSession(preferences);
+              setView("week");
+            }
+          }}
+        />
       ) : view === "positions" ? (
         <PositionsScreen
           candidates={candidates}
@@ -142,7 +156,6 @@ export function App({ config }: { config: PublicConfig }) {
         <AccountScreen
           wallet={wallet}
           preferences={preferences}
-          demoMode={config.demoMode}
           onSave={async (next) => {
             await loadSession(next);
             setView("week");
@@ -170,6 +183,7 @@ export function App({ config }: { config: PublicConfig }) {
             <header className="page-heading">
               <h1>Build this {periodLabel(cadence)} basket</h1>
               <p>Swipe right to allocate {ticketSizeUsd} USDG. Nothing moves until you review and confirm.</p>
+              {config.executionMode === "local-live" ? <p><b>Live signing enabled.</b> Real USDG → WETH Uniswap quote; ranking evidence is local-only.</p> : null}
             </header>
             {error ? (
               <div className="fatal-state"><h2>Session unavailable</h2><p>{error}</p><button type="button" onClick={() => location.reload()}>Try again</button></div>
@@ -185,7 +199,7 @@ export function App({ config }: { config: PublicConfig }) {
                     candidate={current}
                     index={index}
                     total={candidates.length}
-                    demoMode={!feed.proof.teeVerified}
+                    executionMode={config.executionMode}
                     ticketSizeUsd={ticketSizeUsd}
                     feedback={decisionFeedback}
                     onSwipe={animateDecision}
@@ -200,17 +214,18 @@ export function App({ config }: { config: PublicConfig }) {
                   <button type="button" className="button button-outline" onClick={() => {
                     scrollToTop();
                     setStage("review");
-                  }} disabled={!selected.length}>Review basket <ArrowRight /></button>
+                  }} disabled={!selected.length}>Review and sign <ArrowRight /></button>
                 </div>
               </>
             ) : (
               <div className="feed-complete">
+                {selected.length ? <Confetti className="completion-confetti" options={{ gravity: 0.9, particleCount: 120, spread: 90, startVelocity: 36 }} /> : null}
                 <h2>Your feed is complete.</h2>
                 <p>{selected.length ? `${selected.length * ticketSizeUsd} USDG is ready for review.` : "You skipped every card. Your USDG stays in your wallet."}</p>
                 <button type="button" className="button button-primary" disabled={!selected.length} onClick={() => {
                   scrollToTop();
                   setStage("review");
-                }}>Review basket <ArrowRight /></button>
+                }}>Review and sign <ArrowRight /></button>
               </div>
             )}
           </section>
@@ -221,7 +236,7 @@ export function App({ config }: { config: PublicConfig }) {
               scrollToTop();
               setStage("review");
             }}
-            demoMode={!feed?.proof.teeVerified}
+            executionMode={config.executionMode}
             ticketSizeUsd={ticketSizeUsd}
             cadence={cadence}
           />
@@ -234,7 +249,8 @@ export function App({ config }: { config: PublicConfig }) {
           </section>
         </main>
       )}
-    </AppShell>
+      </AppShell>
+    </AssetIconProvider>
   );
 }
 

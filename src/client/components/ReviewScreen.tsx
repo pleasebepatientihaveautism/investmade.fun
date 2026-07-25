@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useWallets, type EIP1193Provider } from "@privy-io/react-auth";
 import { formatUnits } from "viem";
 import type { Candidate } from "../../domain/schemas";
-import type { ExecutionRecord, FeedResponse, WeeklySession } from "../api";
+import { formatTicketSizeUsd } from "../../domain/schemas";
+import type { ExecutionRecord, FeedResponse, WalletCall, WeeklySession } from "../api";
 import { api } from "../api";
 import { AssetMark } from "./AssetMark";
 import { ArrowRight, Check, Close, Shield } from "./Icons";
@@ -30,7 +31,7 @@ export function ReviewScreen({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  const total = selected.length * ticketSizeUsd;
+  const total = Math.round(selected.length * ticketSizeUsd * 100) / 100;
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
@@ -94,17 +95,7 @@ export function ReviewScreen({
       for (const call of record.walletCalls) {
         const transactionHash = (await provider.request({
           method: "eth_sendTransaction",
-          params: [
-            {
-              from: call.transaction.from,
-              to: call.transaction.to,
-              data: call.transaction.data,
-              value: toHex(call.transaction.value),
-              ...(call.transaction.gasLimit
-                ? { gas: toHex(call.transaction.gasLimit) }
-                : {})
-            }
-          ]
+          params: [walletTransaction(call)]
         })) as string;
         if (call.kind !== "SWAP") await waitForReceipt(provider, transactionHash);
         else swapHashes.push(transactionHash);
@@ -139,7 +130,7 @@ export function ReviewScreen({
                 <AssetMark symbol={candidate.symbol} size="sm" />
                 <b>{candidate.symbol}<small>{candidate.name}</small></b>
               </span>
-              <span><strong>{ticketSizeUsd}</strong> USDG</span>
+              <span><strong>{formatTicketSizeUsd(ticketSizeUsd)}</strong> USDG</span>
               <span><strong>{formatOutput(candidate.quote.estimatedAmountOut, candidate.decimals)}</strong> {candidate.symbol}</span>
               <span><strong>{formatOutput(candidate.quote.minimumAmountOut, candidate.decimals)}</strong> {candidate.symbol}</span>
               <span className="blue-text">{(candidate.quote.priceImpactBps / 100).toFixed(2)}%</span>
@@ -147,8 +138,8 @@ export function ReviewScreen({
           ))}
         </div>
         <div className="ledger-totals">
-          <div><span>Total input</span><strong>{total} USDG</strong><small>to invest</small></div>
-          <div><span>Remainder</span><strong>{100 - total} USDG</strong><small>stays in your wallet</small></div>
+          <div><span>Total input</span><strong>{formatTicketSizeUsd(total)} USDG</strong><small>to invest</small></div>
+          <div><span>Remainder</span><strong>{formatTicketSizeUsd(Math.round((100 - total) * 100) / 100)} USDG</strong><small>stays in your wallet</small></div>
         </div>
       </section>
 
@@ -221,6 +212,29 @@ function shortHash(hash: string) {
 
 function toHex(value: string) {
   return `0x${BigInt(value).toString(16)}`;
+}
+
+/**
+ * Preserve the gas terms calculated by the Uniswap Trading API.  The wallet still displays and
+ * signs the transaction; this app merely forwards the transaction that it prepared.
+ */
+function walletTransaction(call: WalletCall) {
+  const { transaction } = call;
+  const hasEip1559Fees = Boolean(transaction.maxFeePerGas && transaction.maxPriorityFeePerGas);
+  return {
+    from: transaction.from,
+    to: transaction.to,
+    data: transaction.data,
+    value: toHex(transaction.value),
+    ...(transaction.gasLimit ? { gas: toHex(transaction.gasLimit) } : {}),
+    ...(hasEip1559Fees && transaction.maxFeePerGas
+      ? { maxFeePerGas: toHex(transaction.maxFeePerGas) }
+      : {}),
+    ...(hasEip1559Fees && transaction.maxPriorityFeePerGas
+      ? { maxPriorityFeePerGas: toHex(transaction.maxPriorityFeePerGas) }
+      : {}),
+    ...(!hasEip1559Fees && transaction.gasPrice ? { gasPrice: toHex(transaction.gasPrice) } : {})
+  };
 }
 
 async function waitForReceipt(provider: EIP1193Provider, hash: string) {

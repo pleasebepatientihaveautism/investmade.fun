@@ -32,6 +32,11 @@ const onboardingPreferences = {
 };
 
 describe("core API flow", () => {
+  it("exposes only safe icon URLs, never the CoinGecko API key", async () => {
+    const response = await request(testApp()).get("/api/assets/icons").expect(200);
+    expect(response.body).toEqual({ icons: {} });
+  });
+
   it("opens one session, generates a bounded feed, and reserves execution once", async () => {
     const app = testApp();
     const opened = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
@@ -120,6 +125,25 @@ describe("core API flow", () => {
     expect(feed.body.candidates).toHaveLength(4);
     expect(feed.body.feed.cards).toHaveLength(4);
     expect(feed.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "25000000")).toBe(true);
+  });
+
+  it("supports $0.10 and $0.25 USDG ticket sizes with exact base units", async () => {
+    const app = testApp();
+    const opened = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
+
+    const tenth = await request(app)
+      .post(`/api/sessions/${opened.body.id}/feed`)
+      .send({ ...onboardingPreferences, ticketSizeUsd: 0.1 })
+      .expect(200);
+    expect(tenth.body.feed.cards).toHaveLength(10);
+    expect(tenth.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "100000")).toBe(true);
+
+    const quarter = await request(app)
+      .post(`/api/sessions/${opened.body.id}/feed`)
+      .send({ ...onboardingPreferences, ticketSizeUsd: 0.25 })
+      .expect(200);
+    expect(quarter.body.feed.cards).toHaveLength(10);
+    expect(quarter.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "250000")).toBe(true);
   });
 
   it("rejects a non-canonical selection", async () => {

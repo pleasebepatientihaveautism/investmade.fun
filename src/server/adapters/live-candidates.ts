@@ -31,7 +31,10 @@ export class LiveCandidateProvider implements CandidateProvider {
   private readonly uniswap: UniswapProvider;
   private readonly client;
 
-  constructor(private readonly config: AppConfig) {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly options: { cryptoOnly?: boolean } = {}
+  ) {
     if (!config.UNISWAP_API_KEY) throw new Error("UNISWAP_API_KEY_REQUIRED");
     this.uniswap = new UniswapProvider(config.UNISWAP_API_KEY);
     this.client = createPublicClient({ transport: http(config.ROBINHOOD_RPC_URL) });
@@ -42,15 +45,16 @@ export class LiveCandidateProvider implements CandidateProvider {
     amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
     now = new Date()
   ): Promise<Candidate[]> {
-    const assetsResponse = await fetch("https://api.robinhood.com/rhj/assets", {
-      signal: AbortSignal.timeout(8_000)
-    });
-    if (!assetsResponse.ok) throw new Error(`ROBINHOOD_ASSETS_${assetsResponse.status}`);
-    const registry = (await assetsResponse.json()) as { assets?: RobinhoodAsset[] };
-    const stockEligible = await this.stockEligible(wallet);
+    const registry = this.options.cryptoOnly
+      ? undefined
+      : await this.assetRegistry();
+    const stockEligible = this.options.cryptoOnly ? false : await this.stockEligible(wallet);
 
     const candidates = await Promise.all(
-      Object.values(ASSET_REGISTRY).slice(0, MAX_CARDS).map(async (asset) => {
+      Object.values(ASSET_REGISTRY)
+        .filter((asset) => !this.options.cryptoOnly || asset.kind === "CRYPTO")
+        .slice(0, MAX_CARDS)
+        .map(async (asset) => {
         try {
           const contractCode = await this.client.getCode({
             address: asset.address as `0x${string}`
@@ -62,7 +66,7 @@ export class LiveCandidateProvider implements CandidateProvider {
           let permissionAllowed = true;
           if (asset.kind === "STOCK_TOKEN") {
             if (!stockEligible) return undefined;
-            const rhAsset = registry.assets?.find((item) => item.tokenSymbol === asset.symbol);
+            const rhAsset = registry?.assets?.find((item) => item.tokenSymbol === asset.symbol);
             const deployment = rhAsset?.deployments.find(
               (item) => item.chainId === 4663 && item.contractAddress.toLowerCase() === asset.address.toLowerCase()
             );
@@ -121,6 +125,14 @@ export class LiveCandidateProvider implements CandidateProvider {
       })
     );
     return candidates.filter((candidate): candidate is Candidate => Boolean(candidate));
+  }
+
+  private async assetRegistry(): Promise<{ assets?: RobinhoodAsset[] }> {
+    const assetsResponse = await fetch("https://api.robinhood.com/rhj/assets", {
+      signal: AbortSignal.timeout(8_000)
+    });
+    if (!assetsResponse.ok) throw new Error(`ROBINHOOD_ASSETS_${assetsResponse.status}`);
+    return (await assetsResponse.json()) as { assets?: RobinhoodAsset[] };
   }
 
   private async stockEligible(wallet: string): Promise<boolean> {

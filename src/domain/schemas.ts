@@ -11,6 +11,28 @@ import {
 
 export const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 export const baseUnitsSchema = z.string().regex(/^[0-9]+$/);
+export const MIN_TICKET_SIZE_USD = 0.1;
+export const TICKET_SIZE_INCREMENT_USD = 0.01;
+export const TICKET_SIZE_INCREMENT_BASE_UNITS = 10_000n;
+
+export function isTicketSizeUsd(value: number): boolean {
+  const cents = value * 100;
+  return (
+    Number.isFinite(value) &&
+    value >= MIN_TICKET_SIZE_USD &&
+    value <= 100 &&
+    Math.abs(cents - Math.round(cents)) < 1e-8
+  );
+}
+
+export function ticketSizeToBaseUnits(ticketSizeUsd: number): bigint {
+  if (!isTicketSizeUsd(ticketSizeUsd)) throw new Error("INVALID_TICKET_SIZE");
+  return BigInt(Math.round(ticketSizeUsd * 10 ** USDG_DECIMALS));
+}
+
+export function formatTicketSizeUsd(ticketSizeUsd: number): string {
+  return String(Number(ticketSizeUsd.toFixed(2)));
+}
 
 export const quoteSchema = z.object({
   requestId: z.string().min(1),
@@ -44,7 +66,9 @@ export const candidateSchema = z.object({
 
 export const personalizationPreferencesSchema = z.object({
   cadence: z.enum(["daily", "weekly", "monthly"]),
-  ticketSizeUsd: z.number().int().min(1).max(100),
+  ticketSizeUsd: z.number().refine(isTicketSizeUsd, {
+    message: "Ticket size must be from $0.10 to $100.00 in $0.01 increments."
+  }),
   riskMode: z.enum(["conservative", "balanced", "degen"]),
   assetClasses: z
     .array(z.enum(["CRYPTO", "STOCK_TOKEN"]))
@@ -130,7 +154,7 @@ export type ExecutionRequest = z.infer<typeof executionRequestSchema>;
 export type ExecutionPlan = z.infer<typeof executionPlanSchema>;
 
 export function budgetForTicket(ticketSizeUsd: number) {
-  const slotBudget = BigInt(ticketSizeUsd) * 10n ** BigInt(USDG_DECIMALS);
+  const slotBudget = ticketSizeToBaseUnits(ticketSizeUsd);
   return {
     periodBudgetBaseUnits: PERIOD_BUDGET.toString(),
     slotBudgetBaseUnits: slotBudget.toString(),

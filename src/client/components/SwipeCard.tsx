@@ -16,7 +16,7 @@ export function SwipeCard({
   candidate,
   index,
   total,
-  demoMode,
+  executionMode,
   ticketSizeUsd,
   feedback,
   onSwipe
@@ -24,7 +24,7 @@ export function SwipeCard({
   candidate: Candidate;
   index: number;
   total: number;
-  demoMode: boolean;
+  executionMode: "demo" | "local-live" | "live";
   ticketSizeUsd: number;
   feedback?: DecisionFeedback;
   onSwipe: (add: boolean) => void;
@@ -86,9 +86,9 @@ export function SwipeCard({
         <div>
           <p className="micro-label">Evidence</p>
           <ul>
-            <li><span className="evidence-dot blue" />{demoMode ? "Local ranking fixture" : "0G private"}</li>
-            <li><span className="evidence-dot black" />{demoMode ? "Identity fixture" : "World verified"}</li>
-            <li><Shield />{demoMode ? "Quote fixture" : "Uniswap quote"}</li>
+            <li><span className="evidence-dot blue" />{executionMode === "live" ? "0G private" : "Local ranking fixture"}</li>
+            <li><span className="evidence-dot black" />{executionMode === "live" ? "World verified" : executionMode === "local-live" ? "Privy wallet auth" : "Identity fixture"}</li>
+            <li><Shield />{executionMode === "demo" ? "Quote fixture" : "Live Uniswap quote"}</li>
           </ul>
         </div>
         <div className="metrics">

@@ -68,7 +68,7 @@ The app prepares a sequence of wallet calls:
 
 1. Optional approval cancellation.
 2. Optional exact required USDG approval.
-3. One fresh, simulated Uniswap calldata request per selected route.
+3. One fresh Uniswap quote and transaction-calldata request per selected route.
 4. Explicit wallet confirmation for each call.
 5. Submission of only the swap transaction hashes to the backend.
 6. Terminal receipt reconciliation.
@@ -80,6 +80,28 @@ For successful buy legs, the receipt records the actual output-token amount tran
 Position exits are prepared independently of the weekly session gate. The live UI reads the connected wallet balance, requests a fresh exact-input asset→USDG route, and requires the wallet to confirm each returned approval/swap call.
 
 No server private key exists. The backend cannot broadcast for the user.
+
+## Signing a live Robinhood Chain trade
+
+Live signing is intentionally unavailable while `INVESTMADE_DEMO_MODE=true`. After configuring the
+required production services, run with `INVESTMADE_DEMO_MODE=false`, connect the funded Privy wallet,
+and use **Review and sign → Refresh quotes & continue → Confirm in wallet**. Privy shows every
+approval and Uniswap swap for the user to approve or reject. investmade.fun forwards the current
+Uniswap gas settings, stores only the resulting swap hashes, and waits for Robinhood Chain receipts.
+
+The settlement screen links each live swap to Blockscout and marks it settled only after the receipt
+matches the authorized calldata and contains an output-token transfer to the connected wallet. It
+does not label a quote, signature request, or submitted hash as settlement.
+
+For a developer-controlled, single-asset mainnet smoke test without enabling the full production
+stack, set `LOCAL_LIVE_EXECUTION=true` while keeping `INVESTMADE_DEMO_MODE=true`. This mode uses
+real USDG→WETH Uniswap calldata and Privy authentication, but keeps the ranking/session state in
+memory and labels its ranking evidence as a demo. It is intentionally limited to WETH, cannot run
+with `NODE_ENV=production`, and is not a production deployment mode.
+
+The API's route quote is simulated before it is returned. The subsequent calldata request is not
+wallet-state simulated because an exact USDG approval may be one of the immediately preceding
+wallet confirmations; simulating it before that approval exists would reject a valid sequence.
 
 ## Live integration evidence
 

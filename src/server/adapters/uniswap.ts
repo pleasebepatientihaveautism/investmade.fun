@@ -35,13 +35,7 @@ export class UniswapProvider implements ExecutionProvider {
             "x-universal-router-version": "2.1.1",
             "x-permit2-disabled": "true"
           },
-          body: JSON.stringify({
-            ...cleanQuoteResponse(raw.body),
-            refreshGasPrice: true,
-            simulateTransaction: true,
-            safetyMode: "SAFE",
-            deadline: Math.floor(Date.now() / 1000) + 60
-          }),
+          body: JSON.stringify(swapRequest(raw.body)),
           signal: AbortSignal.timeout(12_000)
         });
         const swapBody = (await swapResponse.json()) as any;
@@ -263,13 +257,7 @@ export class UniswapProvider implements ExecutionProvider {
         "x-universal-router-version": "2.1.1",
         "x-permit2-disabled": "true"
       },
-      body: JSON.stringify({
-        ...cleanQuoteResponse(quoteResponse),
-        refreshGasPrice: true,
-        simulateTransaction: true,
-        safetyMode: "SAFE",
-        deadline: Math.floor(Date.now() / 1000) + 60
-      }),
+      body: JSON.stringify(swapRequest(quoteResponse)),
       signal: AbortSignal.timeout(12_000)
     });
     const body = (await response.json()) as any;
@@ -313,11 +301,13 @@ function validateTransaction(raw: any, wallet: string): WalletCall["transaction"
   };
 }
 
-function cleanQuoteResponse(body: any): Record<string, unknown> {
-  const {
-    permitData: _permitData,
-    permitTransaction: _permitTransaction,
-    ...clean
-  } = body as Record<string, unknown>;
-  return clean;
+function swapRequest(body: any): Record<string, unknown> {
+  if (!body?.quote || typeof body.quote !== "object") {
+    throw new Error("UNISWAP_QUOTE_PAYLOAD_MISSING");
+  }
+  return {
+    quote: body.quote,
+    safetyMode: "SAFE",
+    deadline: Math.floor(Date.now() / 1000) + 60
+  };
 }

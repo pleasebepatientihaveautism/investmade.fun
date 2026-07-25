@@ -4,8 +4,9 @@ import express, { type NextFunction, type Request, type Response } from "express
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { signRequest } from "@worldcoin/idkit-core/signing";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, http, type Address } from "viem";
 import {
+  addressSchema,
   baseUnitsSchema,
   budgetForTicket,
   executionRequestSchema,
@@ -15,7 +16,7 @@ import {
 } from "../domain/schemas.js";
 import { DEFAULT_BUDGET } from "../domain/schemas.js";
 import { sha256 } from "../domain/canonical.js";
-import { POLICY_VERSION, USDG_ADDRESS } from "../domain/constants.js";
+import { POLICY_VERSION, USDG_ADDRESS, USDG_DECIMALS } from "../domain/constants.js";
 import { cadenceEpoch } from "../domain/epoch.js";
 import {
   policyHash,
@@ -31,6 +32,7 @@ import type {
   PrivateInferenceProvider
 } from "./adapters/types.js";
 import type { StateStore } from "./store.js";
+import type { AssetIconProvider } from "./adapters/coingecko.js";
 
 export interface AppDependencies {
   config: AppConfig;
@@ -38,6 +40,7 @@ export interface AppDependencies {
   candidates: CandidateProvider;
   inference: PrivateInferenceProvider;
   execution: ExecutionProvider;
+  icons?: AssetIconProvider;
 }
 
 export function createApp(deps: AppDependencies) {
@@ -53,7 +56,7 @@ export function createApp(deps: AppDependencies) {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'", "'wasm-unsafe-eval'", "https://challenges.cloudflare.com"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", "data:", "blob:", "https://*.world.org"],
+          imgSrc: ["'self'", "data:", "blob:", "https://*.world.org", "https://coin-images.coingecko.com", "https://cdn.tickerlogos.com"],
           childSrc: [
             "https://auth.privy.io",
             "https://verify.walletconnect.com",
@@ -88,7 +91,7 @@ export function createApp(deps: AppDependencies) {
     "/api",
     rateLimit({
       windowMs: 60_000,
-      limit: deps.config.demoMode ? 240 : 60,
+      limit: deps.config.liveExecution ? 60 : 240,
       standardHeaders: "draft-8",
       legacyHeaders: false
     })
@@ -97,14 +100,15 @@ export function createApp(deps: AppDependencies) {
   app.get("/api/health", (_request, response) => {
     response.json({
       status: "ok",
-      mode: deps.config.demoMode ? "demo" : "live",
+      mode: deps.config.localLiveExecution ? "local-live" : deps.config.demoMode ? "demo" : "live",
       chainId: 4663
     });
   });
 
   app.get("/api/config", (_request, response) => {
     response.json({
-      demoMode: deps.config.demoMode,
+      demoMode: !deps.config.liveExecution,
+      executionMode: deps.config.localLiveExecution ? "local-live" : deps.config.demoMode ? "demo" : "live",
       chainId: 4663,
       stableToken: "USDG",
       periodBudgetBaseUnits: DEFAULT_BUDGET.periodBudgetBaseUnits,
@@ -122,8 +126,40 @@ export function createApp(deps: AppDependencies) {
     });
   });
 
+  app.get("/api/assets/icons", async (_request, response) => {
+    try {
+      response.json({ icons: await deps.icons?.getIcons() ?? {} });
+    } catch {
+      response.json({ icons: {} });
+    }
+  });
+
+  app.get("/api/balances/:address/usdg", async (request, response) => {
+    const address = addressSchema.parse(request.params.address) as Address;
+    const balanceBaseUnits = await chainClient.readContract({
+      address: USDG_ADDRESS,
+      abi: [
+        {
+          type: "function",
+          name: "balanceOf",
+          stateMutability: "view",
+          inputs: [{ name: "account", type: "address" }],
+          outputs: [{ name: "", type: "uint256" }]
+        }
+      ],
+      functionName: "balanceOf",
+      args: [address]
+    });
+    response.json({
+      asset: "USDG",
+      chainId: 4663,
+      decimals: USDG_DECIMALS,
+      balanceBaseUnits: balanceBaseUnits.toString()
+    });
+  });
+
   const requireWallet = async (request: Request, response: Response, next: NextFunction) => {
-    if (deps.config.demoMode) {
+    if (!deps.config.liveExecution) {
       response.locals.wallet = "0x71f30000000000000000000000000000000009a2";
       next();
       return;
@@ -137,7 +173,7 @@ export function createApp(deps: AppDependencies) {
   };
 
   app.post("/api/world/rp-signature", requireWallet, (_request, response) => {
-    if (deps.config.demoMode) {
+    if (!deps.config.liveExecution || deps.config.localLiveExecution) {
       response.json({ demoMode: true, action: deps.config.WORLD_ACTION });
       return;
     }
@@ -163,7 +199,7 @@ export function createApp(deps: AppDependencies) {
       response.status(422).json({ error: "WORLD_ACTION_MISMATCH" });
       return;
     }
-    if (deps.config.demoMode) {
+    if (!deps.config.liveExecution || deps.config.localLiveExecution) {
       response.status(501).json({
         error: "WORLD_DEMO_NOT_FORGED",
         message: "Use World staging IDKit; investmade.fun never manufactures a proof."
@@ -219,11 +255,13 @@ export function createApp(deps: AppDependencies) {
     const submittedPreferences = onboardingPreferencesSchema.parse(request.body);
     const { riskDisclosureAccepted: _accepted, ...preferences } = submittedPreferences;
     const budget = budgetForTicket(preferences.ticketSizeUsd);
-    const candidates = (await deps.candidates.getCandidates(
+    const generatedCandidates = await deps.candidates.getCandidates(
       response.locals.wallet,
       budget.slotBudgetBaseUnits
-    )).filter(
-      (candidate) => preferences.assetClasses.includes(candidate.kind)
+    );
+    const candidates = (deps.config.localLiveExecution
+      ? generatedCandidates
+      : generatedCandidates.filter((candidate) => preferences.assetClasses.includes(candidate.kind))
     ).slice(0, budget.maxCards);
     if (!candidates.length) {
       response.status(422).json({ error: "NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES" });
@@ -303,7 +341,7 @@ export function createApp(deps: AppDependencies) {
   });
 
   app.post("/api/executions/:executionId/demo-settle", requireWallet, async (request, response) => {
-    if (!deps.config.demoMode) {
+    if (!deps.config.demoMode || deps.config.liveExecution) {
       response.status(404).json({ error: "NOT_FOUND" });
       return;
     }
@@ -332,7 +370,7 @@ export function createApp(deps: AppDependencies) {
   });
 
   app.post("/api/executions/:executionId/submitted", requireWallet, async (request, response) => {
-    if (deps.config.demoMode) {
+    if (!deps.config.liveExecution) {
       response.status(409).json({ error: "USE_DEMO_SETTLE" });
       return;
     }
@@ -360,7 +398,7 @@ export function createApp(deps: AppDependencies) {
   });
 
   app.post("/api/executions/:executionId/reconcile", requireWallet, async (request, response) => {
-    if (deps.config.demoMode) {
+    if (!deps.config.liveExecution) {
       response.status(409).json({ error: "USE_DEMO_SETTLE" });
       return;
     }
