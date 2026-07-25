@@ -37,11 +37,11 @@ describe("core API flow", () => {
     expect(response.body).toEqual({ icons: {} });
   });
 
-  it("opens one session, generates a bounded feed, and reserves execution once", async () => {
+  it("opens repeatable demo baskets, generates a bounded feed, and reserves execution once", async () => {
     const app = testApp();
     const opened = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
     const second = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
-    expect(second.body.id).toBe(opened.body.id);
+    expect(second.body.id).not.toBe(opened.body.id);
 
     const feed = await request(app)
       .post(`/api/sessions/${opened.body.id}/feed`)
@@ -77,6 +77,25 @@ describe("core API flow", () => {
         status: "success"
       })
     ]);
+
+    const nextFeed = await request(app)
+      .post(`/api/sessions/${second.body.id}/feed`)
+      .send(onboardingPreferences)
+      .expect(200);
+    const nextPrepared = await request(app)
+      .post("/api/executions/prepare")
+      .send({
+        ...body,
+        sessionId: second.body.id,
+        selections: [
+          {
+            assetId: nextFeed.body.candidates[0].assetId,
+            amountInBaseUnits: "10000000"
+          }
+        ]
+      })
+      .expect(200);
+    expect(nextPrepared.body.plan.executionId).not.toBe(prepared.body.plan.executionId);
   });
 
   it("filters the feed using validated onboarding preferences", async () => {

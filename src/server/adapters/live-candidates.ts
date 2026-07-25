@@ -50,83 +50,91 @@ export class LiveCandidateProvider implements CandidateProvider {
       : await this.assetRegistry();
     const stockEligible = this.options.cryptoOnly ? false : await this.stockEligible(wallet);
 
-    const candidates = await Promise.all(
-      Object.values(ASSET_REGISTRY)
-        .filter((asset) => !this.options.cryptoOnly || asset.kind === "CRYPTO")
-        // Preserve enough candidates for the API to apply the three-card cap
-        // after a user chooses a single asset class.
-        .slice(0, MAX_CARDS * 2)
-        .map(async (asset) => {
-        try {
-          const contractCode = await this.client.getCode({
-            address: asset.address as `0x${string}`
-          });
-          if (!contractCode || contractCode === "0x") return undefined;
+    const assets = Object.values(ASSET_REGISTRY)
+      .filter((asset) => !this.options.cryptoOnly || asset.kind === "CRYPTO");
+    const limit = this.config.localLiveExecution ? assets.length : MAX_CARDS * 2;
+    const candidates: Candidate[] = [];
 
-          let marketHealthy = true;
-          let eligible = true;
-          let permissionAllowed = true;
-          if (asset.kind === "STOCK_TOKEN") {
-            if (!stockEligible) return undefined;
-            const rhAsset = registry?.assets?.find((item) => item.tokenSymbol === asset.symbol);
-            const deployment = rhAsset?.deployments.find(
-              (item) => item.chainId === 4663 && item.contractAddress.toLowerCase() === asset.address.toLowerCase()
-            );
-            if (rhAsset?.status !== "ASSET_STATUS_ACTIVE" || !deployment) return undefined;
-            const [priceResponse, oraclePaused] = await Promise.all([
-              fetch(`https://api.robinhood.com/rhj/prices/${asset.symbol}`, {
-                signal: AbortSignal.timeout(8_000)
-              }),
-              this.client.readContract({
-                address: asset.address as `0x${string}`,
-                abi: oraclePausedAbi,
-                functionName: "oraclePaused"
-              })
-            ]);
-            if (!priceResponse.ok) return undefined;
-            const priceBody = (await priceResponse.json()) as { quotes?: RobinhoodPrice[] };
-            const price = priceBody.quotes?.find((item) => item.tokenSymbol === asset.symbol);
-            const ageMs = price ? now.getTime() - new Date(price.generatedAt).getTime() : Infinity;
-            marketHealthy = Boolean(price && !price.isTradingHalt && oraclePaused === false && ageMs >= 0 && ageMs <= 60_000);
-            permissionAllowed = await this.uniswap.permissionAllowed(wallet, asset.address);
-            eligible = stockEligible;
-          }
+    // Quotes are serial to respect the Uniswap Trading API's rate limit. We
+    // stop once the feed has three genuinely executable assets.
+    for (const asset of assets.slice(0, limit)) {
+      const candidate = await this.resolveCandidate(
+        asset,
+        wallet,
+        amountInBaseUnits,
+        now,
+        registry,
+        stockEligible
+      );
+      if (candidate) candidates.push(candidate);
+      if (candidates.length === MAX_CARDS) break;
+    }
+    return candidates;
+  }
 
-          const seed: Candidate = {
-            ...asset,
-            contract: asset.address,
-            eligible,
-            marketHealthy,
-            permissionAllowed,
-            quote: {
-              requestId: "pending",
-              assetId: asset.assetId,
-              tokenOut: asset.address,
-              amountInBaseUnits,
-              estimatedAmountOut: "1",
-              minimumAmountOut: "1",
-              unitPriceUsd: "10000000",
-              priceImpactBps: 0,
-              routing: "CLASSIC",
-              quotedAt: now.toISOString(),
-              expiresAt: new Date(now.getTime() + 60_000).toISOString()
-            },
-            crowdScoreBps: 0,
-            reason: "Canonical asset with healthy state and a fresh executable route.",
-            evidenceIds: [`rh:registry:${asset.symbol}`, `rh:state:${asset.symbol}`]
-          };
-          const quote = await this.uniswap.quote(wallet, seed, amountInBaseUnits, 50);
-          return {
-            ...seed,
-            quote,
-            evidenceIds: [...seed.evidenceIds, `uni:${quote.requestId}`]
-          };
-        } catch {
-          return undefined;
-        }
-      })
-    );
-    return candidates.filter((candidate): candidate is Candidate => Boolean(candidate));
+  private async resolveCandidate(
+    asset: (typeof ASSET_REGISTRY)[string],
+    wallet: string,
+    amountInBaseUnits: string,
+    now: Date,
+    registry: { assets?: RobinhoodAsset[] } | undefined,
+    stockEligible: boolean
+  ): Promise<Candidate | undefined> {
+    try {
+      const contractCode = await this.client.getCode({ address: asset.address as `0x${string}` });
+      if (!contractCode || contractCode === "0x") return;
+
+      let marketHealthy = true;
+      let eligible = true;
+      let permissionAllowed = true;
+      if (asset.kind === "STOCK_TOKEN") {
+        if (!stockEligible) return;
+        const rhAsset = registry?.assets?.find((item) => item.tokenSymbol === asset.symbol);
+        const deployment = rhAsset?.deployments.find(
+          (item) => item.chainId === 4663 && item.contractAddress.toLowerCase() === asset.address.toLowerCase()
+        );
+        if (rhAsset?.status !== "ASSET_STATUS_ACTIVE" || !deployment) return;
+        const [priceResponse, oraclePaused] = await Promise.all([
+          fetch(`https://api.robinhood.com/rhj/prices/${asset.symbol}`, { signal: AbortSignal.timeout(8_000) }),
+          this.client.readContract({ address: asset.address as `0x${string}`, abi: oraclePausedAbi, functionName: "oraclePaused" })
+        ]);
+        if (!priceResponse.ok) return;
+        const priceBody = (await priceResponse.json()) as { quotes?: RobinhoodPrice[] };
+        const price = priceBody.quotes?.find((item) => item.tokenSymbol === asset.symbol);
+        const ageMs = price ? now.getTime() - new Date(price.generatedAt).getTime() : Infinity;
+        marketHealthy = Boolean(price && !price.isTradingHalt && oraclePaused === false && ageMs >= 0 && ageMs <= 60_000);
+        permissionAllowed = await this.uniswap.permissionAllowed(wallet, asset.address);
+        eligible = stockEligible;
+      }
+
+      const seed: Candidate = {
+        ...asset,
+        contract: asset.address,
+        eligible,
+        marketHealthy,
+        permissionAllowed,
+        quote: {
+          requestId: "pending",
+          assetId: asset.assetId,
+          tokenOut: asset.address,
+          amountInBaseUnits,
+          estimatedAmountOut: "1",
+          minimumAmountOut: "1",
+          unitPriceUsd: "10000000",
+          priceImpactBps: 0,
+          routing: "CLASSIC",
+          quotedAt: now.toISOString(),
+          expiresAt: new Date(now.getTime() + 60_000).toISOString()
+        },
+        crowdScoreBps: 0,
+        reason: "Canonical Uniswap-listed asset with healthy state and a fresh executable route.",
+        evidenceIds: [`uni:list:${asset.symbol}`, `rh:state:${asset.symbol}`]
+      };
+      const quote = await this.uniswap.quote(wallet, seed, amountInBaseUnits, 50);
+      return { ...seed, quote, evidenceIds: [...seed.evidenceIds, `uni:${quote.requestId}`] };
+    } catch {
+      return;
+    }
   }
 
   private async assetRegistry(): Promise<{ assets?: RobinhoodAsset[] }> {
@@ -138,7 +146,10 @@ export class LiveCandidateProvider implements CandidateProvider {
   }
 
   private async stockEligible(wallet: string): Promise<boolean> {
-    if (!this.config.STOCK_ELIGIBILITY_PROVIDER_URL) return false;
+    // Local-live uses Uniswap's per-token permission response together with
+    // Robinhood's active-asset and oracle checks. Production can additionally
+    // require the configured jurisdiction/eligibility service.
+    if (!this.config.STOCK_ELIGIBILITY_PROVIDER_URL) return this.config.localLiveExecution;
     const response = await fetch(this.config.STOCK_ELIGIBILITY_PROVIDER_URL, {
       method: "POST",
       headers: {

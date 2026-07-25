@@ -18,6 +18,7 @@ import type { OnboardingPreferences } from "../domain/schemas";
 type View = "week" | "positions" | "receipts" | "account";
 type Stage = "loading" | "onboarding" | "swipe" | "review";
 type DecisionFeedback = "invest" | "skip";
+const DEV_CARD_LIMIT_KEY = "investmade:dev-card-limit";
 
 export function App({ config }: { config: PublicConfig }) {
   const { authenticated, getAccessToken, login, logout, ready: privyReady } = usePrivy();
@@ -35,6 +36,7 @@ export function App({ config }: { config: PublicConfig }) {
   const [settlement, setSettlement] = useState<ExecutionRecord>();
   const [error, setError] = useState("");
   const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
+  const [devCardLimit, setDevCardLimit] = useState(() => readDevCardLimit(config.maxCards));
   const decisionTimer = useRef<number | undefined>(undefined);
   const wallet = activeWallet?.address.toLowerCase() ?? "";
 
@@ -83,12 +85,24 @@ export function App({ config }: { config: PublicConfig }) {
     []
   );
 
-  const candidates = feed?.candidates ?? [];
+  const feedCandidates = feed?.candidates ?? [];
+  const candidates = config.executionMode === "local-live"
+    ? feedCandidates.slice(0, devCardLimit)
+    : feedCandidates;
   const current = candidates[index];
   const selected = candidates.filter((candidate) => selectedIds.includes(candidate.assetId));
   const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
   const cadence = preferences?.cadence ?? "weekly";
-  const maxCards = Math.min(config.maxCards, Math.floor(100 / ticketSizeUsd));
+  const maxCards = Math.min(
+    config.executionMode === "local-live" ? devCardLimit : config.maxCards,
+    Math.floor(100 / ticketSizeUsd)
+  );
+
+  function changeDevCardLimit(next: number) {
+    const limit = Math.max(1, Math.min(config.maxCards, Math.floor(next)));
+    setDevCardLimit(limit);
+    localStorage.setItem(DEV_CARD_LIMIT_KEY, String(limit));
+  }
 
   const recoverReviewSession = useCallback(async () => {
     if (!preferences) throw new Error("PREFERENCES_REQUIRED");
@@ -170,6 +184,14 @@ export function App({ config }: { config: PublicConfig }) {
         <AccountScreen
           wallet={wallet}
           preferences={preferences}
+          developerMode={config.executionMode === "local-live"}
+          devCardLimit={devCardLimit}
+          maxDevCards={config.maxCards}
+          onDevCardLimitChange={changeDevCardLimit}
+          onResetDemoWeek={async () => {
+            await loadSession(preferences);
+            setView("week");
+          }}
           onSave={async (next) => {
             await loadSession(next);
             setView("week");
@@ -278,4 +300,9 @@ function periodLabel(cadence: OnboardingPreferences["cadence"]) {
   if (cadence === "daily") return "day’s";
   if (cadence === "monthly") return "month’s";
   return "week’s";
+}
+
+function readDevCardLimit(maxCards: number) {
+  const saved = Number(localStorage.getItem(DEV_CARD_LIMIT_KEY));
+  return Number.isInteger(saved) && saved >= 1 && saved <= maxCards ? saved : maxCards;
 }

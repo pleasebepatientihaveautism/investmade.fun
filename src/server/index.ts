@@ -25,7 +25,7 @@ const app = createApp({
     : new PostgresStateStore(required(config.DATABASE_URL, "DATABASE_URL")),
   candidates: config.demoMode
     ? config.localLiveExecution
-      ? new LiveCandidateProvider(config, { cryptoOnly: true })
+      ? new LiveCandidateProvider(config)
       : demo
     : new LiveCandidateProvider(config),
   inference: config.demoMode

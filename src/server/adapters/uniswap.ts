@@ -155,7 +155,7 @@ export class UniswapProvider implements ExecutionProvider {
     slippageBps: number,
     proxyApproval: boolean
   ) {
-    const response = await fetch("https://trade-api.gateway.uniswap.org/v1/quote", {
+    const request = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -174,7 +174,12 @@ export class UniswapProvider implements ExecutionProvider {
         slippageTolerance: slippageBps / 100
       }),
       signal: AbortSignal.timeout(12_000)
-    });
+    };
+    let response = await fetch("https://trade-api.gateway.uniswap.org/v1/quote", request);
+    for (let attempt = 0; response.status === 429 && attempt < 2; attempt += 1) {
+      await wait(750 * (attempt + 1));
+      response = await fetch("https://trade-api.gateway.uniswap.org/v1/quote", request);
+    }
     const body = (await response.json()) as any;
     if (!response.ok) throw new Error(`UNISWAP_QUOTE_${response.status}`);
     return { body };
@@ -264,6 +269,10 @@ export class UniswapProvider implements ExecutionProvider {
     if (!response.ok) throw new Error(`UNISWAP_SWAP_${response.status}`);
     return body;
   }
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function normalizeRouting(value: unknown): Candidate["quote"]["routing"] {

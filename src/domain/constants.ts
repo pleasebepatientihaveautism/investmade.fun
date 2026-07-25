@@ -10,7 +10,7 @@ export const MAX_PRICE_IMPACT_BPS = 100;
 export const QUOTE_TTL_SECONDS = 60;
 export const POLICY_VERSION = "investmade-policy/v1";
 
-export const ASSET_REGISTRY = {
+const CURATED_ASSET_REGISTRY = {
   WETH: {
     assetId: "rh:4663:WETH",
     symbol: "WETH",
@@ -141,6 +141,29 @@ export const ASSET_REGISTRY = {
   }
 } as const;
 
+/**
+ * The canonical Uniswap verified-token list for Robinhood Chain, plus WETH
+ * which is the currently supported non-stock output route. This list is a
+ * candidate universe; every token must still pass live permission, health, and
+ * quote gates before it can appear in a basket or be signed.
+ */
+export const ASSET_REGISTRY: Record<string, RegistryAsset> = {
+  WETH: CURATED_ASSET_REGISTRY.WETH,
+  ...Object.fromEntries(
+    UNISWAP_ROBINHOOD_TOKENS.map((token) => [
+      token.symbol,
+      {
+        assetId: `rh:4663:${token.symbol}`,
+        symbol: token.symbol,
+        name: `${token.name} stock token`,
+        kind: "STOCK_TOKEN" as const,
+        address: token.address,
+        decimals: token.decimals
+      }
+    ])
+  )
+};
+
 /** Public domains used by the AllInvestView ticker-logo CDN for stock token marks. */
 export const STOCK_LOGO_DOMAINS: Record<string, string> = {
   GME: "gamestop.com",
@@ -165,4 +188,12 @@ export const COINGECKO_COIN_IDS: Record<string, string> = {
   WETH: "weth"
 };
 
-export type RegistryAsset = (typeof ASSET_REGISTRY)[keyof typeof ASSET_REGISTRY];
+export type RegistryAsset = {
+  assetId: string;
+  symbol: string;
+  name: string;
+  kind: "CRYPTO" | "STOCK_TOKEN";
+  address: string;
+  decimals: number;
+};
+import { UNISWAP_ROBINHOOD_TOKENS } from "./uniswap-robinhood-tokens.js";

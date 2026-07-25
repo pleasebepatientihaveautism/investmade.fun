@@ -238,7 +238,14 @@ export function createApp(deps: AppDependencies) {
 
   app.post("/api/sessions/open", requireWallet, async (request, response) => {
     const cadence = personalizationPreferencesSchema.shape.cadence.parse(request.body?.cadence);
-    const session = await deps.store.openSession(response.locals.wallet, cadenceEpoch(cadence));
+    const epochId = cadenceEpoch(cadence);
+    // Demo and local-live are intentionally repeatable so a builder can sign
+    // multiple test baskets during one cadence period. Production stays
+    // idempotent per wallet and epoch at the StateStore boundary.
+    const session = await deps.store.openSession(
+      response.locals.wallet,
+      deps.config.demoMode ? `${epochId}:basket:${randomUUID()}` : epochId
+    );
     response.json(session);
   });
 

@@ -11,10 +11,20 @@ const RISK_OPTIONS = ["conservative", "balanced", "degen"] as const;
 export function AccountScreen({
   wallet,
   preferences,
+  developerMode,
+  devCardLimit,
+  maxDevCards,
+  onDevCardLimitChange,
+  onResetDemoWeek,
   onSave
 }: {
   wallet: string;
   preferences: OnboardingPreferences;
+  developerMode: boolean;
+  devCardLimit: number;
+  maxDevCards: number;
+  onDevCardLimitChange: (limit: number) => void;
+  onResetDemoWeek: () => Promise<void>;
   onSave: (preferences: OnboardingPreferences) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(preferences);
@@ -140,6 +150,32 @@ export function AccountScreen({
           </button>
         </div>
       </section>
+
+      {developerMode ? (
+        <section className="account-settings" aria-labelledby="developer-settings-title">
+          <div className="settings-intro">
+            <div>
+              <span className="account-label">Local developer controls</span>
+              <h2 id="developer-settings-title">Test another basket</h2>
+            </div>
+            <span className="settings-limit">Local only</span>
+          </div>
+          <label className="settings-field">
+            <span>Cards to show in this basket</span>
+            <select value={devCardLimit} onChange={(event) => onDevCardLimitChange(Number(event.target.value))}>
+              {Array.from({ length: maxDevCards }, (_, index) => index + 1).map((limit) => (
+                <option value={limit} key={limit}>{limit} {limit === 1 ? "card" : "cards"}</option>
+              ))}
+            </select>
+            <small>Only live, eligible, quoteable cards are shown. The production limit is unchanged.</small>
+          </label>
+          <div className="settings-actions">
+            <button type="button" className="button button-outline" onClick={() => void onResetDemoWeek()}>
+              Reset local week limit and build a new basket
+            </button>
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }
