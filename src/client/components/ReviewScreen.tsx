@@ -100,6 +100,12 @@ export function ReviewScreen({
       setError("No connected wallet or executable calls are available.");
       return;
     }
+    if (!isDelegatedPrivyWallet(activeWallet)) {
+      setError(
+        "One-signature baskets require a delegated Privy smart wallet. This connected wallet queues individual transactions, so Investmade will not submit a partial basket."
+      );
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -129,7 +135,7 @@ export function ReviewScreen({
       setRecord(reconciled);
       onSettled(reconciled);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Wallet execution failed.");
+      setError(executionErrorMessage(caught));
     } finally {
       setLoading(false);
     }
@@ -201,7 +207,7 @@ export function ReviewScreen({
           <p><span>Input commitment</span><b>{shortHash(feed.proof.inputCommitment)}</b></p>
           <p><span>TEE verified</span><b>{feed.proof.teeVerified ? "Verified" : "Not available in demo"}</b></p>
         </div>
-        <div className="wallet-boundary"><Shield /><p>One wallet confirmation batches approval and swaps when supported.<br />A transaction hash is not settlement proof.</p></div>
+        <div className="wallet-boundary"><Shield /><p>One confirmation is available only with a delegated Privy smart wallet that supports atomic batching.<br />A transaction hash is not settlement proof.</p></div>
         {error && <p className="error-message" role="alert">{error}</p>}
         <div className="review-actions">
           <button type="button" className="button button-outline" onClick={onBack}>Back to cards</button>
@@ -254,6 +260,13 @@ async function submitBatch(
 ): Promise<string | undefined> {
   if (calls.length < 2) return;
   try {
+    const capabilities = await provider.request({
+      method: "wallet_getCapabilities",
+      params: [wallet]
+    });
+    if (!supportsAtomicBatch(capabilities)) {
+      throw new Error("ATOMIC_BATCH_NOT_SUPPORTED");
+    }
     const result = await provider.request({
       method: "wallet_sendCalls",
       params: [
@@ -272,6 +285,30 @@ async function submitBatch(
     if (isUnsupportedBatchError(caught)) return;
     throw caught;
   }
+}
+
+/**
+ * EIP-5792 reports capabilities per chain.  We accept only an explicit atomic-batch
+ * declaration: one approval plus several swaps must never be presented as one
+ * confirmation if a wallet will actually submit independent transactions.
+ */
+function supportsAtomicBatch(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const capabilities = value as Record<string, unknown>;
+  const chain = capabilities["0x1237"] ?? capabilities["eip155:4663"];
+  if (!chain || typeof chain !== "object") return false;
+  const atomicBatch = (chain as Record<string, unknown>).atomicBatch;
+  return (
+    atomicBatch === true ||
+    (typeof atomicBatch === "object" &&
+      atomicBatch !== null &&
+      (atomicBatch as { supported?: unknown }).supported === true)
+  );
+}
+
+function isDelegatedPrivyWallet(wallet: { walletClientType?: string; delegated?: boolean }) {
+  return (wallet.walletClientType === "privy" || wallet.walletClientType === "privy-v2") &&
+    wallet.delegated === true;
 }
 
 function walletBatchCall(call: WalletCall) {
@@ -326,6 +363,13 @@ function isUnsupportedBatchError(caught: unknown) {
   );
 }
 
+function executionErrorMessage(caught: unknown) {
+  if (caught instanceof Error && caught.message === "ATOMIC_BATCH_NOT_SUPPORTED") {
+    return "This wallet cannot atomically batch approval and swaps on Robinhood Chain. Connect a Privy smart wallet with atomic batching enabled before signing this basket.";
+  }
+  return caught instanceof Error ? caught.message : "Wallet execution failed.";
+}
+
 function formatOutput(raw: string, decimals: number) {
   const value = Number(formatUnits(BigInt(raw), decimals));
   return Number.isFinite(value) ? value.toLocaleString(undefined, { maximumSignificantDigits: 6 }) : "—";
@@ -340,8 +384,8 @@ function toHex(value: string) {
 }
 
 /**
- * Preserve the gas terms calculated by the Uniswap Trading API.  The wallet still displays and
- * signs the transaction; this app merely forwards the transaction that it prepared.
+ * A quote's gas limit is only a snapshot.  Robinhood Chain can need more gas at signing time,
+ * so allow the connected wallet to estimate its own limit instead of forwarding a stale cap.
  */
 function walletTransaction(call: WalletCall) {
   const { transaction } = call;
@@ -351,7 +395,6 @@ function walletTransaction(call: WalletCall) {
     to: transaction.to,
     data: transaction.data,
     value: toHex(transaction.value),
-    ...(transaction.gasLimit ? { gas: toHex(transaction.gasLimit) } : {}),
     ...(hasEip1559Fees && transaction.maxFeePerGas
       ? { maxFeePerGas: toHex(transaction.maxFeePerGas) }
       : {}),

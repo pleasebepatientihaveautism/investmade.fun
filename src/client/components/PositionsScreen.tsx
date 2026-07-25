@@ -189,7 +189,6 @@ function walletTransaction(call: WalletCall) {
     to: transaction.to,
     data: transaction.data,
     value: toHex(transaction.value),
-    ...(transaction.gasLimit ? { gas: toHex(transaction.gasLimit) } : {}),
     ...(hasEip1559Fees && transaction.maxFeePerGas
       ? { maxFeePerGas: toHex(transaction.maxFeePerGas) }
       : {}),
