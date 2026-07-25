@@ -24,6 +24,7 @@ export interface WeeklySession {
 export interface ExecutionRecord {
   plan: ExecutionPlan;
   status: "PREPARED" | "SUBMITTED" | "SETTLED" | "PARTIAL" | "FAILED";
+  submissionMode: "SEQUENTIAL" | "BATCH";
   transactionHashes: string[];
   settledOutputs: SettledOutput[];
   settledAt?: string;
@@ -49,7 +50,8 @@ export interface StateStore {
     id: string,
     status: ExecutionRecord["status"],
     transactionHashes?: string[],
-    settledOutputs?: SettledOutput[]
+    settledOutputs?: SettledOutput[],
+    submissionMode?: ExecutionRecord["submissionMode"]
   ): Promise<ExecutionRecord>;
 }
 
@@ -107,6 +109,7 @@ export class MemoryStateStore implements StateStore {
     const record: ExecutionRecord = {
       plan,
       status: "PREPARED",
+      submissionMode: "SEQUENTIAL",
       transactionHashes: [],
       settledOutputs: []
     };
@@ -141,13 +144,15 @@ export class MemoryStateStore implements StateStore {
     id: string,
     status: ExecutionRecord["status"],
     transactionHashes: string[] = [],
-    settledOutputs: SettledOutput[] = []
+    settledOutputs: SettledOutput[] = [],
+    submissionMode: ExecutionRecord["submissionMode"] = "SEQUENTIAL"
   ): Promise<ExecutionRecord> {
     const existing = this.executions.get(id);
     if (!existing) throw new Error("EXECUTION_NOT_FOUND");
     const updated = {
       ...existing,
       status,
+      submissionMode,
       transactionHashes,
       settledOutputs,
       settledAt: ["SETTLED", "PARTIAL", "FAILED"].includes(status)

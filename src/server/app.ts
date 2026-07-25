@@ -392,16 +392,26 @@ export function createApp(deps: AppDependencies) {
       return;
     }
     const hashes = request.body?.transactionHashes;
+    const batched = request.body?.batched === true;
     if (
       !Array.isArray(hashes) ||
-      hashes.length !== execution.plan.callCommitments.length ||
+      hashes.length !== (batched ? 1 : execution.plan.callCommitments.length) ||
+      (batched && execution.plan.callCommitments.length === 0) ||
       new Set(hashes).size !== hashes.length ||
       !hashes.every((hash) => /^0x[a-fA-F0-9]{64}$/.test(hash))
     ) {
       response.status(422).json({ error: "INVALID_TRANSACTION_HASHES" });
       return;
     }
-    response.json(await deps.store.updateExecution(execution.plan.executionId, "SUBMITTED", hashes));
+    response.json(
+      await deps.store.updateExecution(
+        execution.plan.executionId,
+        "SUBMITTED",
+        hashes,
+        [],
+        batched ? "BATCH" : "SEQUENTIAL"
+      )
+    );
   });
 
   app.post("/api/executions/:executionId/reconcile", requireWallet, async (request, response) => {
@@ -417,6 +427,62 @@ export function createApp(deps: AppDependencies) {
     const session = await deps.store.getSession(execution.plan.sessionId);
     if (!session || session.wallet !== response.locals.wallet) {
       response.status(404).json({ error: "EXECUTION_NOT_FOUND" });
+      return;
+    }
+    if (execution.submissionMode === "BATCH") {
+      const hash = execution.transactionHashes[0];
+      if (!hash) {
+        response.status(409).json({ error: "BATCH_TRANSACTION_MISSING" });
+        return;
+      }
+      try {
+        const [transaction, receipt] = await Promise.all([
+          chainClient.getTransaction({ hash: hash as `0x${string}` }),
+          chainClient.getTransactionReceipt({ hash: hash as `0x${string}` })
+        ]);
+        if (
+          transaction.from.toLowerCase() !== session.wallet ||
+          spentTransferAmount(receipt.logs, USDG_ADDRESS, transaction.from) !==
+            BigInt(execution.plan.totalInputBaseUnits)
+        ) {
+          throw new Error("TRANSACTION_PLAN_MISMATCH");
+        }
+        const settledOutputs = execution.plan.quotes.map((quote) => {
+          const amountOutBaseUnits =
+            receipt.status === "success"
+              ? settledTransferAmount(receipt.logs, quote.tokenOut, session.wallet)
+              : 0n;
+          return {
+            assetId: quote.assetId,
+            amountOutBaseUnits: amountOutBaseUnits.toString(),
+            transactionHash: hash,
+            blockNumber: receipt.blockNumber.toString(),
+            status:
+              receipt.status === "success" && amountOutBaseUnits > 0n
+                ? ("success" as const)
+                : ("failed" as const)
+          };
+        });
+        const successCount = settledOutputs.filter((output) => output.status === "success").length;
+        const status =
+          successCount === settledOutputs.length
+            ? "SETTLED"
+            : successCount > 0
+              ? "PARTIAL"
+              : "FAILED";
+        response.json(
+          await deps.store.updateExecution(
+            execution.plan.executionId,
+            status,
+            execution.transactionHashes,
+            settledOutputs,
+            "BATCH"
+          )
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === "TRANSACTION_PLAN_MISMATCH") throw error;
+        response.status(202).json({ ...execution, reconciliation: ["pending"] });
+      }
       return;
     }
     const outcomes = await Promise.all(

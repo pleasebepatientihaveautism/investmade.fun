@@ -5,6 +5,8 @@ export const PERIOD_BUDGET = 100_000_000n;
 export const DEFAULT_SLOT_BUDGET = 10_000_000n;
 /** A focused basket contains at most three investment decisions per session. */
 export const MAX_CARDS = 3;
+/** Local-only feed preview cap. Signing and production policy remain capped at three cards. */
+export const LOCAL_DEMO_CANDIDATE_LIMIT = 10;
 export const MAX_SLIPPAGE_BPS = 50;
 export const MAX_PRICE_IMPACT_BPS = 100;
 export const QUOTE_TTL_SECONDS = 60;

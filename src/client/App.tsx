@@ -19,6 +19,7 @@ type View = "week" | "positions" | "receipts" | "account";
 type Stage = "loading" | "onboarding" | "swipe" | "review";
 type DecisionFeedback = "invest" | "skip";
 const DEV_CARD_LIMIT_KEY = "investmade:dev-card-limit";
+const DEV_CARD_LIMIT_MAX = 10;
 
 export function App({ config }: { config: PublicConfig }) {
   const { authenticated, getAccessToken, login, logout, ready: privyReady } = usePrivy();
@@ -36,7 +37,7 @@ export function App({ config }: { config: PublicConfig }) {
   const [settlement, setSettlement] = useState<ExecutionRecord>();
   const [error, setError] = useState("");
   const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
-  const [devCardLimit, setDevCardLimit] = useState(() => readDevCardLimit(config.maxCards));
+  const [devCardLimit, setDevCardLimit] = useState(() => readDevCardLimit(DEV_CARD_LIMIT_MAX));
   const decisionTimer = useRef<number | undefined>(undefined);
   const wallet = activeWallet?.address.toLowerCase() ?? "";
 
@@ -93,13 +94,12 @@ export function App({ config }: { config: PublicConfig }) {
   const selected = candidates.filter((candidate) => selectedIds.includes(candidate.assetId));
   const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
   const cadence = preferences?.cadence ?? "weekly";
-  const maxCards = Math.min(
-    config.executionMode === "local-live" ? devCardLimit : config.maxCards,
-    Math.floor(100 / ticketSizeUsd)
-  );
+  // The developer menu changes how many candidates can be reviewed. The
+  // signed basket is still bound by the production three-card policy.
+  const maxCards = Math.min(config.maxCards, Math.floor(100 / ticketSizeUsd));
 
   function changeDevCardLimit(next: number) {
-    const limit = Math.max(1, Math.min(config.maxCards, Math.floor(next)));
+    const limit = Math.max(1, Math.min(DEV_CARD_LIMIT_MAX, Math.floor(next)));
     setDevCardLimit(limit);
     localStorage.setItem(DEV_CARD_LIMIT_KEY, String(limit));
   }
@@ -186,7 +186,7 @@ export function App({ config }: { config: PublicConfig }) {
           preferences={preferences}
           developerMode={config.executionMode === "local-live"}
           devCardLimit={devCardLimit}
-          maxDevCards={config.maxCards}
+          maxDevCards={DEV_CARD_LIMIT_MAX}
           onDevCardLimitChange={changeDevCardLimit}
           onResetDemoWeek={async () => {
             await loadSession(preferences);

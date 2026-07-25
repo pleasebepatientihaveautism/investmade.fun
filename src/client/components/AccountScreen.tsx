@@ -1,5 +1,6 @@
 import { formatUnits } from "viem";
 import { useEffect, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import type { OnboardingPreferences } from "../../domain/schemas";
 import { formatTicketSizeUsd, isTicketSizeUsd } from "../../domain/schemas";
 import { api } from "../api";
@@ -32,6 +33,7 @@ export function AccountScreen({
   const [balanceError, setBalanceError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addressCopied, setAddressCopied] = useState(false);
 
   useEffect(() => setDraft(preferences), [preferences]);
 
@@ -66,6 +68,24 @@ export function AccountScreen({
     }
   }
 
+  async function copyAddress() {
+    if (!wallet) return;
+    try {
+      await navigator.clipboard.writeText(wallet);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = wallet;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setAddressCopied(true);
+    window.setTimeout(() => setAddressCopied(false), 1_800);
+  }
+
   return (
     <main className="account-page">
       <header className="account-heading">
@@ -80,7 +100,20 @@ export function AccountScreen({
           <strong>{balance === undefined ? (balanceError ? "—" : "Loading…") : `${balance} USDG`}</strong>
           <small>{balanceError || "Live Robinhood Chain balance via Alchemy"}</small>
         </div>
-        <code>{wallet ? `${wallet.slice(0, 10)}…${wallet.slice(-8)}` : "Wallet not connected"}</code>
+        <div className="account-address">
+          <code>{wallet ? `${wallet.slice(0, 10)}…${wallet.slice(-8)}` : "Wallet not connected"}</code>
+          {wallet ? (
+            <button
+              type="button"
+              className="copy-address"
+              aria-label={addressCopied ? "Address copied" : "Copy wallet address"}
+              title={addressCopied ? "Copied" : "Copy address"}
+              onClick={() => void copyAddress()}
+            >
+              {addressCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </button>
+          ) : null}
+        </div>
       </section>
 
       <section className="account-settings" aria-labelledby="settings-title">
@@ -92,13 +125,19 @@ export function AccountScreen({
           <span className="settings-limit">100 USDG period limit</span>
         </div>
 
-        <label className="settings-field">
+        <div className="settings-field">
           <span>How often can you use Investmade?</span>
-          <select value={draft.cadence} onChange={(event) => setDraft((current) => ({ ...current, cadence: event.target.value as OnboardingPreferences["cadence"] }))}>
-            {CADENCE_OPTIONS.map((cadence) => <option value={cadence} key={cadence}>Every {cadence === "daily" ? "day" : cadence === "weekly" ? "week" : "month"}</option>)}
-          </select>
+          <SelectMenu
+            ariaLabel="How often can you use Investmade? A new session is available once per selected period."
+            value={draft.cadence}
+            options={CADENCE_OPTIONS.map((cadence) => ({
+              value: cadence,
+              label: `Every ${cadence === "daily" ? "day" : cadence === "weekly" ? "week" : "month"}`
+            }))}
+            onChange={(cadence) => setDraft((current) => ({ ...current, cadence: cadence as OnboardingPreferences["cadence"] }))}
+          />
           <small>A new session is available once per selected period.</small>
-        </label>
+        </div>
 
         <label className="settings-field">
           <span>Ticket size per accepted card</span>
@@ -160,15 +199,19 @@ export function AccountScreen({
             </div>
             <span className="settings-limit">Local only</span>
           </div>
-          <label className="settings-field">
+          <div className="settings-field">
             <span>Cards to show in this basket</span>
-            <select value={devCardLimit} onChange={(event) => onDevCardLimitChange(Number(event.target.value))}>
-              {Array.from({ length: maxDevCards }, (_, index) => index + 1).map((limit) => (
-                <option value={limit} key={limit}>{limit} {limit === 1 ? "card" : "cards"}</option>
-              ))}
-            </select>
+            <SelectMenu
+              ariaLabel="Cards to show in this basket. Only live, eligible, quoteable cards are shown."
+              value={String(devCardLimit)}
+              options={Array.from({ length: maxDevCards }, (_, index) => index + 1).map((limit) => ({
+                value: String(limit),
+                label: `${limit} ${limit === 1 ? "card" : "cards"}`
+              }))}
+              onChange={(limit) => onDevCardLimitChange(Number(limit))}
+            />
             <small>Only live, eligible, quoteable cards are shown. The production limit is unchanged.</small>
-          </label>
+          </div>
           <div className="settings-actions">
             <button type="button" className="button button-outline" onClick={() => void onResetDemoWeek()}>
               Reset local week limit and build a new basket
@@ -177,6 +220,62 @@ export function AccountScreen({
         </section>
       ) : null}
     </main>
+  );
+}
+
+function SelectMenu({
+  ariaLabel,
+  value,
+  options,
+  onChange
+}: {
+  ariaLabel: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+
+  return (
+    <div className="select-menu">
+      <button
+        type="button"
+        className="select-trigger"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+      >
+        <span>{selected?.label ?? "Select an option"}</span>
+        <svg viewBox="0 0 16 10" aria-hidden="true"><path d="m1 1 7 7 7-7" /></svg>
+      </button>
+      {open ? (
+        <div className="select-options" role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => {
+            const active = option.value === value;
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={active ? "selected" : ""}
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

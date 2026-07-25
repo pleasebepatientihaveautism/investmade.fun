@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET } from "../../domain/constants.js";
+import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, MAX_CARDS } from "../../domain/constants.js";
 import { sha256 } from "../../domain/canonical.js";
 import { unitPriceUsdFromQuote } from "../../domain/price.js";
 import type { Candidate, ExecutionRequest, FeedInput, FeedOutput } from "../../domain/schemas.js";
@@ -128,7 +128,7 @@ export class DemoProvider
   }
 
   async generate(input: FeedInput, candidates: Candidate[]) {
-    const cards = candidates.map((candidate, index) => ({
+    const cards = candidates.slice(0, MAX_CARDS).map((candidate, index) => ({
       assetId: candidate.assetId,
       action: "BUY" as const,
       rank: index + 1,

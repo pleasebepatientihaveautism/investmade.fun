@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS executions (
     status IN ('PREPARED', 'SUBMITTED', 'SETTLED', 'PARTIAL', 'FAILED')
   ),
   transaction_hashes text[] NOT NULL DEFAULT '{}',
+  submission_mode text NOT NULL DEFAULT 'SEQUENTIAL' CHECK (submission_mode IN ('SEQUENTIAL', 'BATCH')),
   settled_outputs jsonb NOT NULL DEFAULT '[]'::jsonb,
   settled_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -45,6 +46,10 @@ CREATE INDEX IF NOT EXISTS executions_status_idx ON executions(status);
 
 ALTER TABLE executions
   ADD COLUMN IF NOT EXISTS settled_outputs jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE executions
+  ADD COLUMN IF NOT EXISTS submission_mode text NOT NULL DEFAULT 'SEQUENTIAL'
+  CHECK (submission_mode IN ('SEQUENTIAL', 'BATCH'));
 
 CREATE TABLE IF NOT EXISTS human_verifications (
   wallet text PRIMARY KEY CHECK (wallet ~ '^0x[0-9a-f]{40}$'),

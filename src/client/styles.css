@@ -503,7 +503,11 @@ button:focus-visible { outline: 3px solid rgba(18, 71, 232, 0.35); outline-offse
 .account-balance div { display: grid; gap: 5px; }
 .account-balance strong { font: 42px/1 "Archivo Black"; letter-spacing: -2px; }
 .account-balance small { color: #3f4b1d; }
-.account-balance code { font-size: 12px; overflow-wrap: anywhere; }
+.account-address { display: inline-flex; align-items: center; gap: 7px; flex-wrap: nowrap; white-space: nowrap; }
+.account-balance code { font-size: 12px; overflow-wrap: normal; }
+.copy-address { display: inline-grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--line-strong); border-radius: 7px; background: white; padding: 0; color: var(--ink); cursor: pointer; }
+.copy-address svg { width: 14px; height: 14px; stroke-width: 2.5; }
+.copy-address:hover { border-color: var(--blue); color: var(--blue); }
 .account-settings { display: grid; gap: 22px; padding: 26px; border: 1px solid var(--line); border-radius: 14px; background: white; }
 .settings-intro { display: flex; justify-content: space-between; gap: 18px; align-items: start; border-bottom: 1px solid var(--line); padding-bottom: 18px; }
 .settings-intro h2 { margin: 5px 0 0; font: 27px/1 "Archivo Black"; letter-spacing: -1px; }
@@ -511,7 +515,16 @@ button:focus-visible { outline: 3px solid rgba(18, 71, 232, 0.35); outline-offse
 .settings-field { display: grid; gap: 8px; padding: 0; border: 0; margin: 0; }
 .settings-field > span, .settings-field legend { font-weight: 800; font-size: 14px; padding: 0; }
 .settings-field small { color: var(--muted); font-size: 12px; }
-.settings-field select, .ticket-input { width: min(100%, 360px); min-height: 46px; border: 1px solid var(--line-strong); border-radius: 9px; background: white; padding: 0 12px; font-weight: 700; }
+.ticket-input { width: min(100%, 360px); min-height: 46px; border: 1px solid var(--line-strong); border-radius: 9px; background: white; padding: 0 12px; font-weight: 700; }
+.select-menu { position: relative; width: min(100%, 360px); }
+.select-trigger { display: flex; width: 100%; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; border: 2px solid var(--line-strong); border-radius: 9px; background: white; padding: 0 14px; color: var(--ink); font: 700 15px/1.1 "Inter", sans-serif; text-align: left; cursor: pointer; }
+.select-trigger:hover, .select-trigger[aria-expanded="true"] { border-color: var(--blue); box-shadow: 3px 3px 0 var(--blue-soft); }
+.select-trigger svg { width: 14px; height: 9px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; transition: transform 150ms ease; }
+.select-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
+.select-options { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; overflow: hidden; border: 2px solid var(--line-strong); border-radius: 9px; background: white; box-shadow: 5px 5px 0 var(--line); }
+.select-options button { display: flex; width: 100%; min-height: 42px; align-items: center; border: 0; border-bottom: 1px solid var(--line); background: white; padding: 0 14px; color: var(--ink); font: 700 14px/1.1 "Inter", sans-serif; text-align: left; cursor: pointer; }
+.select-options button:last-child { border-bottom: 0; }
+.select-options button:hover, .select-options button.selected { background: var(--blue-soft); color: var(--blue); }
 .ticket-input { display: grid; grid-template-columns: 36px 1fr; padding: 0; overflow: hidden; }
 .ticket-input b { display: grid; place-items: center; background: var(--blue-soft); color: var(--blue); }
 .ticket-input input { border: 0; outline: 0; padding: 0 12px; font: inherit; min-width: 0; }

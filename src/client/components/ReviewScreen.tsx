@@ -105,6 +105,15 @@ export function ReviewScreen({
     try {
       await activeWallet.switchChain(4663);
       const provider = await activeWallet.getEthereumProvider();
+      const batchHash = await submitBatch(provider, activeWallet.address, record.walletCalls);
+      if (batchHash) {
+        const submitted = await api.markSubmitted(record.plan.executionId, [batchHash], true);
+        setRecord(submitted);
+        const reconciled = await reconcileUntilTerminal(record.plan.executionId);
+        setRecord(reconciled);
+        onSettled(reconciled);
+        return;
+      }
       const swapHashes: string[] = [];
       for (const call of record.walletCalls) {
         const transactionHash = (await provider.request({
@@ -192,7 +201,7 @@ export function ReviewScreen({
           <p><span>Input commitment</span><b>{shortHash(feed.proof.inputCommitment)}</b></p>
           <p><span>TEE verified</span><b>{feed.proof.teeVerified ? "Verified" : "Not available in demo"}</b></p>
         </div>
-        <div className="wallet-boundary"><Shield /><p>Your wallet may request multiple confirmations.<br />A transaction hash is not settlement proof.</p></div>
+        <div className="wallet-boundary"><Shield /><p>One wallet confirmation batches approval and swaps when supported.<br />A transaction hash is not settlement proof.</p></div>
         {error && <p className="error-message" role="alert">{error}</p>}
         <div className="review-actions">
           <button type="button" className="button button-outline" onClick={onBack}>Back to cards</button>
@@ -235,6 +244,85 @@ export function ReviewScreen({
         })}
       </section>
     </main>
+  );
+}
+
+async function submitBatch(
+  provider: EIP1193Provider,
+  wallet: string,
+  calls: WalletCall[]
+): Promise<string | undefined> {
+  if (calls.length < 2) return;
+  try {
+    const result = await provider.request({
+      method: "wallet_sendCalls",
+      params: [
+        {
+          version: "1.0",
+          chainId: "0x1237",
+          from: wallet,
+          calls: calls.map((call) => walletBatchCall(call))
+        }
+      ]
+    });
+    const id = batchId(result);
+    if (!id) throw new Error("BATCH_ID_MISSING");
+    return await waitForBatchHash(provider, id);
+  } catch (caught) {
+    if (isUnsupportedBatchError(caught)) return;
+    throw caught;
+  }
+}
+
+function walletBatchCall(call: WalletCall) {
+  const { transaction } = call;
+  return {
+    to: transaction.to,
+    data: transaction.data,
+    value: toHex(transaction.value)
+  };
+}
+
+function batchId(result: unknown): string | undefined {
+  if (typeof result === "string") return result;
+  if (!result || typeof result !== "object") return;
+  const value = result as { id?: unknown; transactionId?: unknown; transaction_id?: unknown };
+  return [value.id, value.transactionId, value.transaction_id].find(
+    (item): item is string => typeof item === "string"
+  );
+}
+
+async function waitForBatchHash(provider: EIP1193Provider, id: string): Promise<string> {
+  if (/^0x[a-fA-F0-9]{64}$/.test(id)) return id;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const status = (await provider.request({
+      method: "wallet_getCallsStatus",
+      params: [id]
+    })) as {
+      status?: string;
+      receipts?: Array<{ transactionHash?: string }>;
+    };
+    if (status.status === "CONFIRMED") {
+      const hashes = new Set(
+        (status.receipts ?? [])
+          .map((receipt) => receipt.transactionHash)
+          .filter((hash): hash is string => /^0x[a-fA-F0-9]{64}$/.test(hash ?? ""))
+      );
+      if (hashes.size === 1) return [...hashes][0] as string;
+      throw new Error("BATCH_TRANSACTION_HASH_MISSING");
+    }
+    if (status.status === "FAILED") throw new Error("BATCH_TRANSACTION_FAILED");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error("BATCH_CONFIRMATION_PENDING");
+}
+
+function isUnsupportedBatchError(caught: unknown) {
+  const error = caught as { code?: unknown; message?: unknown };
+  return (
+    error?.code === 4200 ||
+    error?.code === -32601 ||
+    (typeof error?.message === "string" && /unsupported|not supported|method not found/i.test(error.message))
   );
 }
 

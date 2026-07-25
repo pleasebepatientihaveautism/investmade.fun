@@ -78,4 +78,19 @@ describe("weekly session idempotency", () => {
     );
     expect(settled.settledOutputs[0]?.blockNumber).toBe("123");
   });
+
+  it("records a submitted atomic batch separately from sequential calls", async () => {
+    const store = new MemoryStateStore();
+    const session = await store.openSession("0xabc", "2026-W30");
+    const current = { ...plan, sessionId: session.id };
+    await store.reserveExecution(session.id, current);
+    const submitted = await store.updateExecution(
+      current.executionId,
+      "SUBMITTED",
+      [`0x${"e".repeat(64)}`],
+      [],
+      "BATCH"
+    );
+    expect(submitted.submissionMode).toBe("BATCH");
+  });
 });

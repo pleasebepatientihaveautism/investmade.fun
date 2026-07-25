@@ -28,6 +28,7 @@ export interface FeedResponse {
 export interface ExecutionRecord {
   plan: ExecutionPlan;
   status: "PREPARED" | "SUBMITTED" | "SETTLED" | "PARTIAL" | "FAILED";
+  submissionMode: "SEQUENTIAL" | "BATCH";
   transactionHashes: string[];
   settledOutputs: Array<{
     assetId: string;
@@ -156,10 +157,10 @@ export const api = {
     }),
   demoSettle: (executionId: string) =>
     request<ExecutionRecord>(`/api/executions/${executionId}/demo-settle`, { method: "POST" }),
-  markSubmitted: (executionId: string, transactionHashes: string[]) =>
+  markSubmitted: (executionId: string, transactionHashes: string[], batched = false) =>
     request<ExecutionRecord>(`/api/executions/${executionId}/submitted`, {
       method: "POST",
-      body: JSON.stringify({ transactionHashes })
+      body: JSON.stringify({ transactionHashes, batched })
     }),
   reconcile: (executionId: string) =>
     request<ExecutionRecord>(`/api/executions/${executionId}/reconcile`, { method: "POST" }),

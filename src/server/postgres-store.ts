@@ -19,6 +19,7 @@ interface SessionRow {
 interface ExecutionRow {
   plan: ExecutionPlan;
   status: ExecutionRecord["status"];
+  submission_mode: ExecutionRecord["submissionMode"];
   transaction_hashes: string[];
   settled_outputs: SettledOutput[];
   settled_at: Date | null;
@@ -114,6 +115,7 @@ export class PostgresStateStore implements StateStore {
       return {
         plan,
         status: "PREPARED",
+        submissionMode: "SEQUENTIAL",
         transactionHashes: [],
         settledOutputs: []
       };
@@ -141,7 +143,7 @@ export class PostgresStateStore implements StateStore {
        WHERE id = $1
          AND status = 'PREPARED'
          AND authorized_plan_hash = $3
-       RETURNING plan, status, transaction_hashes, settled_outputs, settled_at`,
+       RETURNING plan, status, submission_mode, transaction_hashes, settled_outputs, settled_at`,
       [id, JSON.stringify({ ...plan, executionId: id }), plan.authorizedPlanHash]
     );
     if (!result.rows[0]) throw new Error("EPOCH_ALREADY_EXECUTED");
@@ -152,7 +154,8 @@ export class PostgresStateStore implements StateStore {
     id: string,
     status: ExecutionRecord["status"],
     transactionHashes: string[] = [],
-    settledOutputs: SettledOutput[] = []
+    settledOutputs: SettledOutput[] = [],
+    submissionMode: ExecutionRecord["submissionMode"] = "SEQUENTIAL"
   ): Promise<ExecutionRecord> {
     const terminal = ["SETTLED", "PARTIAL", "FAILED"].includes(status);
     const result = await this.pool.query<ExecutionRow>(
@@ -160,11 +163,12 @@ export class PostgresStateStore implements StateStore {
        SET status = $2,
            transaction_hashes = $3,
            settled_outputs = $4::jsonb,
-           settled_at = CASE WHEN $5 THEN now() ELSE settled_at END,
+           submission_mode = $5,
+           settled_at = CASE WHEN $6 THEN now() ELSE settled_at END,
            updated_at = now()
        WHERE id = $1
-       RETURNING plan, status, transaction_hashes, settled_outputs, settled_at`,
-      [id, status, transactionHashes, JSON.stringify(settledOutputs), terminal]
+       RETURNING plan, status, submission_mode, transaction_hashes, settled_outputs, settled_at`,
+      [id, status, transactionHashes, JSON.stringify(settledOutputs), submissionMode, terminal]
     );
     if (!result.rows[0]) throw new Error("EXECUTION_NOT_FOUND");
     return mapExecution(result.rows[0]);
@@ -172,7 +176,7 @@ export class PostgresStateStore implements StateStore {
 
   private async getExecutionWithClient(client: PoolClient, id: string) {
     const result = await client.query<ExecutionRow>(
-      `SELECT plan, status, transaction_hashes, settled_outputs, settled_at
+      `SELECT plan, status, submission_mode, transaction_hashes, settled_outputs, settled_at
        FROM executions WHERE id = $1`,
       [id]
     );
@@ -195,6 +199,7 @@ function mapExecution(row: ExecutionRow): ExecutionRecord {
   return {
     plan: row.plan,
     status: row.status,
+    submissionMode: row.submission_mode,
     transactionHashes: row.transaction_hashes,
     settledOutputs: row.settled_outputs,
     settledAt: row.settled_at?.toISOString()

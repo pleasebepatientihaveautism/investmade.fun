@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   MAX_CARDS,
+  LOCAL_DEMO_CANDIDATE_LIMIT,
   POLICY_VERSION,
   ROBINHOOD_CHAIN_ID,
   DEFAULT_SLOT_BUDGET,
@@ -94,7 +95,7 @@ export const feedInputSchema = z.object({
     maxCards: z.number().int().min(1).max(MAX_CARDS)
   }),
   preferences: personalizationPreferencesSchema,
-  candidates: z.array(candidateSchema).max(MAX_CARDS),
+  candidates: z.array(candidateSchema).max(LOCAL_DEMO_CANDIDATE_LIMIT),
   inputCommitment: z.string().regex(/^sha256:[a-f0-9]{64}$/)
 });
 

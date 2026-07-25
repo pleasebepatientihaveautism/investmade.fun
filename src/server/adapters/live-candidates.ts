@@ -1,5 +1,5 @@
 import { createPublicClient, http } from "viem";
-import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, MAX_CARDS } from "../../domain/constants.js";
+import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, LOCAL_DEMO_CANDIDATE_LIMIT, MAX_CARDS } from "../../domain/constants.js";
 import type { Candidate } from "../../domain/schemas.js";
 import type { AppConfig } from "../config.js";
 import type { CandidateProvider } from "./types.js";
@@ -67,7 +67,7 @@ export class LiveCandidateProvider implements CandidateProvider {
         stockEligible
       );
       if (candidate) candidates.push(candidate);
-      if (candidates.length === MAX_CARDS) break;
+      if (candidates.length === (this.config.localLiveExecution ? LOCAL_DEMO_CANDIDATE_LIMIT : MAX_CARDS)) break;
     }
     return candidates;
   }
@@ -102,7 +102,18 @@ export class LiveCandidateProvider implements CandidateProvider {
         const priceBody = (await priceResponse.json()) as { quotes?: RobinhoodPrice[] };
         const price = priceBody.quotes?.find((item) => item.tokenSymbol === asset.symbol);
         const ageMs = price ? now.getTime() - new Date(price.generatedAt).getTime() : Infinity;
-        marketHealthy = Boolean(price && !price.isTradingHalt && oraclePaused === false && ageMs >= 0 && ageMs <= 60_000);
+        // Robinhood's equity-price feed is not continuously updated outside
+        // market hours. A local-live session is explicitly a developer/demo
+        // environment, so keep an active, non-halted, on-chain stock token in
+        // the three-card preview even when that timestamp is stale. Production
+        // continues to require a fresh price before an asset can pass policy.
+        const priceIsFresh = ageMs >= 0 && ageMs <= 60_000;
+        marketHealthy = Boolean(
+          price &&
+            !price.isTradingHalt &&
+            oraclePaused === false &&
+            (this.config.localLiveExecution || priceIsFresh)
+        );
         permissionAllowed = await this.uniswap.permissionAllowed(wallet, asset.address);
         eligible = stockEligible;
       }
