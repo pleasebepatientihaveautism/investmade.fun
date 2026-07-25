@@ -1,3 +1,12 @@
+export type InvestmentCadence = "daily" | "weekly" | "monthly";
+
+export function cadenceEpoch(cadence: InvestmentCadence, date = new Date()): string {
+  const day = date.toISOString().slice(0, 10);
+  if (cadence === "daily") return `D:${day}`;
+  if (cadence === "monthly") return `M:${day.slice(0, 7)}`;
+  return `W:${weeklyEpoch(date)}`;
+}
+
 export function weeklyEpoch(date = new Date()): string {
   const current = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const day = current.getUTCDay() || 7;

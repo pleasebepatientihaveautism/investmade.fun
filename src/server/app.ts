@@ -7,13 +7,16 @@ import { signRequest } from "@worldcoin/idkit-core/signing";
 import { createPublicClient, http } from "viem";
 import {
   baseUnitsSchema,
+  budgetForTicket,
   executionRequestSchema,
-  feedInputSchema
+  feedInputSchema,
+  onboardingPreferencesSchema,
+  personalizationPreferencesSchema
 } from "../domain/schemas.js";
 import { DEFAULT_BUDGET } from "../domain/schemas.js";
 import { sha256 } from "../domain/canonical.js";
 import { POLICY_VERSION, USDG_ADDRESS } from "../domain/constants.js";
-import { weeklyEpoch } from "../domain/epoch.js";
+import { cadenceEpoch } from "../domain/epoch.js";
 import {
   policyHash,
   PolicyError,
@@ -104,7 +107,7 @@ export function createApp(deps: AppDependencies) {
       demoMode: deps.config.demoMode,
       chainId: 4663,
       stableToken: "USDG",
-      weeklyBudgetBaseUnits: DEFAULT_BUDGET.weeklyBudgetBaseUnits,
+      periodBudgetBaseUnits: DEFAULT_BUDGET.periodBudgetBaseUnits,
       slotBudgetBaseUnits: DEFAULT_BUDGET.slotBudgetBaseUnits,
       maxCards: DEFAULT_BUDGET.maxCards
       ,
@@ -197,8 +200,9 @@ export function createApp(deps: AppDependencies) {
     response.json({ success: true, proofOfHumanVerified: true });
   });
 
-  app.post("/api/sessions/open", requireWallet, async (_request, response) => {
-    const session = await deps.store.openSession(response.locals.wallet, weeklyEpoch());
+  app.post("/api/sessions/open", requireWallet, async (request, response) => {
+    const cadence = personalizationPreferencesSchema.shape.cadence.parse(request.body?.cadence);
+    const session = await deps.store.openSession(response.locals.wallet, cadenceEpoch(cadence));
     response.json(session);
   });
 
@@ -212,13 +216,26 @@ export function createApp(deps: AppDependencies) {
       response.status(403).json({ error: "WORLD_VERIFICATION_REQUIRED" });
       return;
     }
-    const candidates = await deps.candidates.getCandidates(response.locals.wallet);
+    const submittedPreferences = onboardingPreferencesSchema.parse(request.body);
+    const { riskDisclosureAccepted: _accepted, ...preferences } = submittedPreferences;
+    const budget = budgetForTicket(preferences.ticketSizeUsd);
+    const candidates = (await deps.candidates.getCandidates(
+      response.locals.wallet,
+      budget.slotBudgetBaseUnits
+    )).filter(
+      (candidate) => preferences.assetClasses.includes(candidate.kind)
+    ).slice(0, budget.maxCards);
+    if (!candidates.length) {
+      response.status(422).json({ error: "NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES" });
+      return;
+    }
     const unsignedInput = {
       schemaVersion: "investmade-feed-input/v1" as const,
       sessionId: session.id,
       epochId: session.epochId,
       policyVersion: POLICY_VERSION,
-      budget: DEFAULT_BUDGET,
+      budget,
+      preferences,
       candidates
     };
     const input = feedInputSchema.parse({
@@ -237,7 +254,11 @@ export function createApp(deps: AppDependencies) {
       response.status(404).json({ error: "SESSION_NOT_FOUND" });
       return;
     }
-    const candidates = await deps.candidates.getCandidates(response.locals.wallet);
+    const slotBudgetBaseUnits = parsed.selections[0]?.amountInBaseUnits;
+    const candidates = await deps.candidates.getCandidates(
+      response.locals.wallet,
+      slotBudgetBaseUnits
+    );
     validateExecutionSelection(parsed, candidates);
     const preparation = await deps.execution.prepare(response.locals.wallet, parsed, candidates);
     const quotes = preparation.quotes;
@@ -260,7 +281,7 @@ export function createApp(deps: AppDependencies) {
         .reduce((sum, selection) => sum + BigInt(selection.amountInBaseUnits), 0n)
         .toString(),
       authorizedPlanHash: sha256(intent),
-      policyHash: policyHash(),
+      policyHash: policyHash(slotBudgetBaseUnits ?? "0"),
       callCommitments: preparation.walletCalls
         .filter((call) => call.kind === "SWAP")
         .map((call) =>

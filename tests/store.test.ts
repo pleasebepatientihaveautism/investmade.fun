@@ -20,6 +20,7 @@ const plan: ExecutionPlan = {
       amountInBaseUnits: "10000000",
       estimatedAmountOut: "1",
       minimumAmountOut: "1",
+      unitPriceUsd: "10000000",
       priceImpactBps: 10,
       routing: "CLASSIC",
       quotedAt: "2026-07-25T12:00:00.000Z",

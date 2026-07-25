@@ -1,4 +1,5 @@
 import { USDG_ADDRESS } from "../../domain/constants.js";
+import { unitPriceUsdFromQuote } from "../../domain/price.js";
 import type { Candidate, ExecutionRequest } from "../../domain/schemas.js";
 import type { ExecutionProvider, WalletCall } from "./types.js";
 
@@ -207,6 +208,7 @@ export class UniswapProvider implements ExecutionProvider {
       amountInBaseUnits,
       estimatedAmountOut: estimated,
       minimumAmountOut: minimum,
+      unitPriceUsd: unitPriceUsdFromQuote(amountInBaseUnits, estimated, candidate.decimals),
       priceImpactBps: Math.max(0, Math.round(Number(quote.priceImpact ?? 0) * 100)),
       routing: normalizeRouting(body.routing),
       quotedAt: new Date().toISOString(),

@@ -26,7 +26,7 @@ export function PositionsScreen({
   demoMode: boolean;
 }) {
   const { wallets } = useWallets();
-  const activeWallet = wallets.find((candidate) => candidate.linked) ?? wallets[0];
+  const activeWallet = wallets.find((candidate) => candidate.linked);
   const [balances, setBalances] = useState<Record<string, string>>({});
   const [prepared, setPrepared] = useState<Record<string, ExitPreparation>>({});
   const [status, setStatus] = useState<Record<string, string>>({});

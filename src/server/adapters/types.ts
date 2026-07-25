@@ -17,7 +17,7 @@ export interface WalletCall {
 }
 
 export interface CandidateProvider {
-  getCandidates(wallet: string, now?: Date): Promise<Candidate[]>;
+  getCandidates(wallet: string, amountInBaseUnits?: string, now?: Date): Promise<Candidate[]>;
 }
 
 export interface PrivateInferenceProvider {

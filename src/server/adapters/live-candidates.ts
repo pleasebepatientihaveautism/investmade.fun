@@ -1,5 +1,5 @@
 import { createPublicClient, http } from "viem";
-import { ASSET_REGISTRY, SLOT_BUDGET } from "../../domain/constants.js";
+import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, MAX_CARDS } from "../../domain/constants.js";
 import type { Candidate } from "../../domain/schemas.js";
 import type { AppConfig } from "../config.js";
 import type { CandidateProvider } from "./types.js";
@@ -37,7 +37,11 @@ export class LiveCandidateProvider implements CandidateProvider {
     this.client = createPublicClient({ transport: http(config.ROBINHOOD_RPC_URL) });
   }
 
-  async getCandidates(wallet: string, now = new Date()): Promise<Candidate[]> {
+  async getCandidates(
+    wallet: string,
+    amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
+    now = new Date()
+  ): Promise<Candidate[]> {
     const assetsResponse = await fetch("https://api.robinhood.com/rhj/assets", {
       signal: AbortSignal.timeout(8_000)
     });
@@ -46,7 +50,7 @@ export class LiveCandidateProvider implements CandidateProvider {
     const stockEligible = await this.stockEligible(wallet);
 
     const candidates = await Promise.all(
-      Object.values(ASSET_REGISTRY).map(async (asset) => {
+      Object.values(ASSET_REGISTRY).slice(0, MAX_CARDS).map(async (asset) => {
         try {
           const contractCode = await this.client.getCode({
             address: asset.address as `0x${string}`
@@ -92,9 +96,10 @@ export class LiveCandidateProvider implements CandidateProvider {
               requestId: "pending",
               assetId: asset.assetId,
               tokenOut: asset.address,
-              amountInBaseUnits: SLOT_BUDGET.toString(),
+              amountInBaseUnits,
               estimatedAmountOut: "1",
               minimumAmountOut: "1",
+              unitPriceUsd: "10000000",
               priceImpactBps: 0,
               routing: "CLASSIC",
               quotedAt: now.toISOString(),
@@ -104,7 +109,7 @@ export class LiveCandidateProvider implements CandidateProvider {
             reason: "Canonical asset with healthy state and a fresh executable route.",
             evidenceIds: [`rh:registry:${asset.symbol}`, `rh:state:${asset.symbol}`]
           };
-          const quote = await this.uniswap.quote(wallet, seed, SLOT_BUDGET.toString(), 50);
+          const quote = await this.uniswap.quote(wallet, seed, amountInBaseUnits, 50);
           return {
             ...seed,
             quote,

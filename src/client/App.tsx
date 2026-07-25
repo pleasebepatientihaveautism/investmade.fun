@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight as LucideArrowRight } from "lucide-react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { api, configureApiAuth, type ExecutionRecord, type FeedResponse, type PublicConfig, type WeeklySession } from "./api";
@@ -10,22 +10,30 @@ import { ReviewScreen } from "./components/ReviewScreen";
 import { ReceiptScreen } from "./components/ReceiptScreen";
 import { Onboarding } from "./components/Onboarding";
 import { PositionsScreen } from "./components/PositionsScreen";
+import { AccountScreen } from "./components/AccountScreen";
+import type { OnboardingPreferences } from "../domain/schemas";
 
-type View = "week" | "positions" | "receipts";
+type View = "week" | "positions" | "receipts" | "account";
 type Stage = "loading" | "onboarding" | "swipe" | "review";
+type DecisionFeedback = "invest" | "skip";
 
 export function App({ config }: { config: PublicConfig }) {
-  const { authenticated, getAccessToken, logout, ready: privyReady } = usePrivy();
+  const { authenticated, getAccessToken, login, logout, ready: privyReady } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
-  const activeWallet = wallets.find((candidate) => candidate.linked) ?? wallets[0];
+  const activeWallet = authenticated
+    ? wallets.find((candidate) => candidate.linked)
+    : undefined;
   const [view, setView] = useState<View>("week");
   const [stage, setStage] = useState<Stage>("loading");
   const [session, setSession] = useState<WeeklySession>();
   const [feed, setFeed] = useState<FeedResponse>();
+  const [preferences, setPreferences] = useState<OnboardingPreferences>();
   const [index, setIndex] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [settlement, setSettlement] = useState<ExecutionRecord>();
   const [error, setError] = useState("");
+  const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
+  const decisionTimer = useRef<number | undefined>(undefined);
   const wallet = activeWallet?.address.toLowerCase() ?? "";
 
   useEffect(() => {
@@ -36,43 +44,66 @@ export function App({ config }: { config: PublicConfig }) {
     return () => configureApiAuth(undefined);
   }, [activeWallet?.address, getAccessToken]);
 
-  const loadSession = useCallback(async () => {
-    const opened = await api.openSession();
-    const generated = await api.generateFeed(opened.id);
-    setSession(opened);
-    setFeed(generated);
-    scrollToTop();
-    setStage("swipe");
+  const loadSession = useCallback(async (preferences: OnboardingPreferences) => {
+    setError("");
+    try {
+      const opened = await api.openSession(preferences.cadence);
+      const generated = await api.generateFeed(opened.id, preferences);
+      setPreferences(preferences);
+      setSession(opened);
+      setFeed(generated);
+      setIndex(0);
+      setSelectedIds([]);
+      scrollToTop();
+      setStage("swipe");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not open session");
+      scrollToTop();
+      setStage("swipe");
+    }
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!cancelled) {
-          if (config.demoMode) await loadSession();
-          else {
-            scrollToTop();
-            setStage("onboarding");
-          }
-        }
-      } catch (caught) {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : "Could not open session");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [config.demoMode, loadSession]);
+    scrollToTop();
+    setStage("onboarding");
+  }, []);
+
+  useEffect(() => {
+    if (privyReady && !authenticated) {
+      setStage("onboarding");
+    }
+  }, [authenticated, privyReady]);
+
+  useEffect(
+    () => () => {
+      if (decisionTimer.current) window.clearTimeout(decisionTimer.current);
+    },
+    []
+  );
 
   const candidates = feed?.candidates ?? [];
   const current = candidates[index];
   const selected = candidates.filter((candidate) => selectedIds.includes(candidate.assetId));
+  const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
+  const cadence = preferences?.cadence ?? "weekly";
+  const maxCards = Math.min(10, Math.floor(100 / ticketSizeUsd));
 
   function decide(add: boolean) {
     if (!current) return;
-    if (add && !selectedIds.includes(current.assetId) && selectedIds.length < 10) {
+    if (add && !selectedIds.includes(current.assetId) && selectedIds.length < maxCards) {
       setSelectedIds((ids) => [...ids, current.assetId]);
     }
     setIndex((value) => Math.min(value + 1, candidates.length));
+  }
+
+  function animateDecision(add: boolean) {
+    if (!current || decisionFeedback) return;
+    setDecisionFeedback(add ? "invest" : "skip");
+    decisionTimer.current = window.setTimeout(() => {
+      decide(add);
+      setDecisionFeedback(undefined);
+      decisionTimer.current = undefined;
+    }, 300);
   }
 
   function remove(assetId: string) {
@@ -90,7 +121,8 @@ export function App({ config }: { config: PublicConfig }) {
       active={view}
       onNavigate={navigate}
       wallet={wallet}
-      onWallet={authenticated ? logout : undefined}
+      onWallet={authenticated ? logout : login}
+      walletReady={privyReady}
     >
       {stage === "onboarding" ? (
         <Onboarding
@@ -106,6 +138,16 @@ export function App({ config }: { config: PublicConfig }) {
           wallet={wallet}
           demoMode={config.demoMode}
         />
+      ) : view === "account" && preferences ? (
+        <AccountScreen
+          wallet={wallet}
+          preferences={preferences}
+          demoMode={config.demoMode}
+          onSave={async (next) => {
+            await loadSession(next);
+            setView("week");
+          }}
+        />
       ) : stage === "review" && session && feed ? (
         <ReviewScreen
           session={session}
@@ -120,13 +162,14 @@ export function App({ config }: { config: PublicConfig }) {
             setSettlement(record);
             setView("receipts");
           }}
+          ticketSizeUsd={ticketSizeUsd}
         />
       ) : (
         <main className="swipe-page">
           <section className="swipe-workspace">
             <header className="page-heading">
-              <h1>Build this week’s basket</h1>
-              <p>Swipe right to allocate 10 USDG. Nothing moves until you review and confirm.</p>
+              <h1>Build this {periodLabel(cadence)} basket</h1>
+              <p>Swipe right to allocate {ticketSizeUsd} USDG. Nothing moves until you review and confirm.</p>
             </header>
             {error ? (
               <div className="fatal-state"><h2>Session unavailable</h2><p>{error}</p><button type="button" onClick={() => location.reload()}>Try again</button></div>
@@ -135,7 +178,7 @@ export function App({ config }: { config: PublicConfig }) {
             ) : current ? (
               <>
                 <div className="card-stage">
-                  <button type="button" className="gesture gesture-skip" onClick={() => decide(false)} aria-label="Skip asset">
+                  <button type="button" className="gesture gesture-skip" onClick={() => animateDecision(false)} aria-label="Skip asset" disabled={Boolean(decisionFeedback)}>
                     <ArrowLeft /><span>Skip<small>Swipe left</small></span>
                   </button>
                   <SwipeCard
@@ -143,14 +186,17 @@ export function App({ config }: { config: PublicConfig }) {
                     index={index}
                     total={candidates.length}
                     demoMode={!feed.proof.teeVerified}
+                    ticketSizeUsd={ticketSizeUsd}
+                    feedback={decisionFeedback}
+                    onSwipe={animateDecision}
                   />
-                  <button type="button" className="gesture gesture-add" onClick={() => decide(true)} aria-label="Add 10 USDG">
+                  <button type="button" className="gesture gesture-add" onClick={() => animateDecision(true)} aria-label={`Add ${ticketSizeUsd} USDG`} disabled={Boolean(decisionFeedback)}>
                     <LucideArrowRight /><span>Add<small>Swipe right</small></span>
                   </button>
                 </div>
                 <div className="card-actions">
-                  <button type="button" className="button button-skip" onClick={() => decide(false)}>Skip</button>
-                  <button type="button" className="button button-primary" onClick={() => decide(true)}>Add 10 USDG</button>
+                  <button type="button" className="button button-skip" onClick={() => animateDecision(false)} disabled={Boolean(decisionFeedback)}>Skip</button>
+                  <button type="button" className="button button-primary" onClick={() => animateDecision(true)} disabled={Boolean(decisionFeedback)}>Add {ticketSizeUsd} USDG</button>
                   <button type="button" className="button button-outline" onClick={() => {
                     scrollToTop();
                     setStage("review");
@@ -160,7 +206,7 @@ export function App({ config }: { config: PublicConfig }) {
             ) : (
               <div className="feed-complete">
                 <h2>Your feed is complete.</h2>
-                <p>{selected.length ? `${selected.length * 10} USDG is ready for review.` : "You skipped every card. Your USDG stays in your wallet."}</p>
+                <p>{selected.length ? `${selected.length * ticketSizeUsd} USDG is ready for review.` : "You skipped every card. Your USDG stays in your wallet."}</p>
                 <button type="button" className="button button-primary" disabled={!selected.length} onClick={() => {
                   scrollToTop();
                   setStage("review");
@@ -176,6 +222,8 @@ export function App({ config }: { config: PublicConfig }) {
               setStage("review");
             }}
             demoMode={!feed?.proof.teeVerified}
+            ticketSizeUsd={ticketSizeUsd}
+            cadence={cadence}
           />
           <section className="trust-strip">
             <Shield /><b>Non-custodial by design</b><span>You control your keys</span><span>We never hold funds</span><span>Every trade requires your signature</span>
@@ -192,4 +240,10 @@ export function App({ config }: { config: PublicConfig }) {
 
 function scrollToTop() {
   window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function periodLabel(cadence: OnboardingPreferences["cadence"]) {
+  if (cadence === "daily") return "day’s";
+  if (cadence === "monthly") return "month’s";
+  return "week’s";
 }

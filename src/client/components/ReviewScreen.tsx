@@ -13,7 +13,8 @@ export function ReviewScreen({
   selected,
   onRemove,
   onBack,
-  onSettled
+  onSettled,
+  ticketSizeUsd
 }: {
   session: WeeklySession;
   feed: FeedResponse;
@@ -21,14 +22,15 @@ export function ReviewScreen({
   onRemove: (assetId: string) => void;
   onBack: () => void;
   onSettled: (record: ExecutionRecord) => void;
+  ticketSizeUsd: number;
 }) {
   const { wallets } = useWallets();
-  const activeWallet = wallets.find((candidate) => candidate.linked) ?? wallets[0];
+  const activeWallet = wallets.find((candidate) => candidate.linked);
   const [record, setRecord] = useState<ExecutionRecord>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  const total = selected.length * 10;
+  const total = selected.length * ticketSizeUsd;
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
@@ -53,7 +55,8 @@ export function ReviewScreen({
     try {
       const prepared = await api.prepareExecution(
         session.id,
-        selected.map((item) => item.assetId)
+        selected.map((item) => item.assetId),
+        ticketSizeUsd
       );
       setRecord(prepared);
     } catch (caught) {
@@ -136,7 +139,7 @@ export function ReviewScreen({
                 <AssetMark symbol={candidate.symbol} size="sm" />
                 <b>{candidate.symbol}<small>{candidate.name}</small></b>
               </span>
-              <span><strong>10</strong> USDG</span>
+              <span><strong>{ticketSizeUsd}</strong> USDG</span>
               <span><strong>{formatOutput(candidate.quote.estimatedAmountOut, candidate.decimals)}</strong> {candidate.symbol}</span>
               <span><strong>{formatOutput(candidate.quote.minimumAmountOut, candidate.decimals)}</strong> {candidate.symbol}</span>
               <span className="blue-text">{(candidate.quote.priceImpactBps / 100).toFixed(2)}%</span>

@@ -1,8 +1,8 @@
 # investmade.fun
 
-investmade.fun is a non-custodial, fixed-budget weekly allocation app for Robinhood Chain. A private 0G model ranks only canonical assets that already passed deterministic eligibility, market-state, permission, and exact-size Uniswap quote gates. The user chooses cards, reviews a bounded basket, and confirms every wallet call.
+investmade.fun is a non-custodial, fixed-budget allocation app for Robinhood Chain. Users choose a daily, weekly, or monthly cadence and a per-card ticket size. A private 0G model ranks only canonical assets that already passed deterministic eligibility, market-state, permission, and exact-size Uniswap quote gates. The user chooses cards, reviews a bounded basket, and confirms every wallet call.
 
-This repository implements the core MVP described in [INVESTMADE_FUN.md](./INVESTMADE_FUN.md). Autonomous mandates and AgentKit execution are intentionally excluded from the core path.
+This repository implements the core MVP described in [investmade_fun.md](./investmade_fun.md). Autonomous mandates and AgentKit execution are intentionally excluded from the core path.
 
 Privy provides email, external-wallet, and embedded-wallet authentication. The browser sends a
 short-lived Privy access token with the active wallet address; the server verifies the token and
@@ -13,8 +13,10 @@ confirms that address is linked to the authenticated Privy user before accepting
 
 - React/Vite product UI: onboarding, swipe feed, budget rail, review, explicit wallet confirmation, positions, and terminal receipts.
 - Privy access-token authentication with server-side linked-wallet verification.
+- First-time, five-question onboarding for cadence, ticket size, risk mode, asset mix, and explicit product-risk acknowledgement; preferences determine session epochs, quote amounts, policy limits, the server-side candidate set, and private-ranking input.
 - World ID 4.0 RP signatures and backend verification; production feed generation requires a verified human.
-- Canonical Robinhood Chain registry for USDG, WETH, AAPL, and TSLA.
+- Canonical Robinhood Chain registry sourced from Uniswap’s Robinhood Stocks list: WETH plus 15 tokenized stock assets; the ten-card feed uses WETH and the first nine listed stocks.
+- Each live card displays a USD unit price derived from its fresh server-side Uniswap exact-input quote.
 - Live Robinhood asset/price/contract/oracle-pause checks.
 - Server-side stock eligibility provider boundary; stock cards fail closed without an affirmative result.
 - Live Uniswap permission, approval, exact-input quote, and swap-calldata construction.

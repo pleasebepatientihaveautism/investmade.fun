@@ -2,14 +2,22 @@ import type { ReactNode } from "react";
 import { WalletCards } from "lucide-react";
 
 interface Props {
-  active: "week" | "positions" | "receipts";
+  active: "week" | "positions" | "receipts" | "account";
   onNavigate: (target: Props["active"]) => void;
   wallet?: string;
   onWallet?: () => void;
+  walletReady?: boolean;
   children: ReactNode;
 }
 
-export function AppShell({ active, onNavigate, wallet, onWallet, children }: Props) {
+export function AppShell({
+  active,
+  onNavigate,
+  wallet,
+  onWallet,
+  walletReady = true,
+  children
+}: Props) {
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -20,7 +28,8 @@ export function AppShell({ active, onNavigate, wallet, onWallet, children }: Pro
           {[
             ["week", "This week"],
             ["positions", "Positions"],
-            ["receipts", "Receipts"]
+            ["receipts", "Receipts"],
+            ["account", "Account"]
           ].map(([id, label]) => (
             <button
               type="button"
@@ -32,12 +41,22 @@ export function AppShell({ active, onNavigate, wallet, onWallet, children }: Pro
             </button>
           ))}
         </nav>
-        <button type="button" className="wallet-button" onClick={onWallet} title={onWallet ? "Log out of Privy" : undefined}>
+        <button
+          type="button"
+          className="wallet-button"
+          onClick={onWallet}
+          disabled={!walletReady}
+          aria-label={wallet ? "Disconnect Privy wallet" : "Connect wallet with Privy"}
+          title={wallet ? "Disconnect Privy wallet" : "Connect wallet with Privy"}
+        >
           <WalletCards size={17} strokeWidth={1.7} />
-          {wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : "0x71F3…09A2"}
+          {wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : "Connect wallet"}
         </button>
       </header>
       {children}
+      <footer className="logo-attribution">
+        <a href="https://www.allinvestview.com/tools/ticker-logos/">Logos by AllInvestView</a>
+      </footer>
     </div>
   );
 }

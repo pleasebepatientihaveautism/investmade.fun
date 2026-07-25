@@ -23,17 +23,28 @@ function testApp() {
   });
 }
 
+const onboardingPreferences = {
+  cadence: "weekly",
+  ticketSizeUsd: 10,
+  riskMode: "balanced",
+  assetClasses: ["CRYPTO", "STOCK_TOKEN"],
+  riskDisclosureAccepted: true
+};
+
 describe("core API flow", () => {
   it("opens one session, generates a bounded feed, and reserves execution once", async () => {
     const app = testApp();
-    const opened = await request(app).post("/api/sessions/open").expect(200);
-    const second = await request(app).post("/api/sessions/open").expect(200);
+    const opened = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
+    const second = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
     expect(second.body.id).toBe(opened.body.id);
 
     const feed = await request(app)
       .post(`/api/sessions/${opened.body.id}/feed`)
+      .send(onboardingPreferences)
       .expect(200);
-    expect(feed.body.feed.cards).toHaveLength(3);
+    expect(feed.body.feed.cards).toHaveLength(10);
+    expect(feed.body.candidates).toHaveLength(10);
+    expect(feed.body.candidates[0].quote.unitPriceUsd).toBe("3212.335367");
     expect(feed.body.proof.teeVerified).toBe(false);
 
     const body = {
@@ -63,9 +74,57 @@ describe("core API flow", () => {
     ]);
   });
 
+  it("filters the feed using validated onboarding preferences", async () => {
+    const app = testApp();
+    const opened = await request(app).post("/api/sessions/open").send({ cadence: "daily" }).expect(200);
+    const feed = await request(app)
+      .post(`/api/sessions/${opened.body.id}/feed`)
+      .send({
+        ...onboardingPreferences,
+        cadence: "daily",
+        ticketSizeUsd: 10,
+        riskMode: "conservative",
+        assetClasses: ["STOCK_TOKEN"]
+      })
+      .expect(200);
+
+    expect(feed.body.candidates).toHaveLength(9);
+    expect(
+      feed.body.candidates.every((candidate: { kind: string }) => candidate.kind === "STOCK_TOKEN")
+    ).toBe(true);
+    expect(feed.body.feed.cards[0].amountInBaseUnits).toBe("10000000");
+    expect(feed.body.candidates[0].quote.amountInBaseUnits).toBe("10000000");
+
+    const prepared = await request(app)
+      .post("/api/executions/prepare")
+      .send({
+        sessionId: opened.body.id,
+        chainId: 4663,
+        inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+        selections: [{ assetId: "rh:4663:AAPL", amountInBaseUnits: "10000000" }],
+        slippageBps: 50
+      })
+      .expect(200);
+    expect(prepared.body.plan.totalInputBaseUnits).toBe("10000000");
+    expect(prepared.body.plan.quotes[0].amountInBaseUnits).toBe("10000000");
+  });
+
+  it("bounds a higher ticket-size feed within the fixed period budget", async () => {
+    const app = testApp();
+    const opened = await request(app).post("/api/sessions/open").send({ cadence: "monthly" }).expect(200);
+    const feed = await request(app)
+      .post(`/api/sessions/${opened.body.id}/feed`)
+      .send({ ...onboardingPreferences, cadence: "monthly", ticketSizeUsd: 25 })
+      .expect(200);
+
+    expect(feed.body.candidates).toHaveLength(4);
+    expect(feed.body.feed.cards).toHaveLength(4);
+    expect(feed.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "25000000")).toBe(true);
+  });
+
   it("rejects a non-canonical selection", async () => {
     const app = testApp();
-    const opened = await request(app).post("/api/sessions/open").expect(200);
+    const opened = await request(app).post("/api/sessions/open").send({ cadence: "weekly" }).expect(200);
     const response = await request(app)
       .post("/api/executions/prepare")
       .send({

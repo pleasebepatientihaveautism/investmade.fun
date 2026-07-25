@@ -7,16 +7,13 @@ import { PolicyError, eligibleCandidates, validateFeed } from "../src/domain/pol
 describe("deterministic feed policy", () => {
   it("accepts only fresh, registered, executable candidates", async () => {
     const now = new Date("2026-07-25T12:00:00.000Z");
-    const candidates = await new DemoProvider().getCandidates("0x0", now);
-    expect(eligibleCandidates(candidates, now)).toHaveLength(3);
+    const candidates = await new DemoProvider().getCandidates("0x0", "10000000", now);
+    expect(eligibleCandidates(candidates, now)).toHaveLength(10);
 
     const firstCandidate = candidates[0];
     if (!firstCandidate) throw new Error("Expected a demo candidate");
     firstCandidate.quote.expiresAt = new Date(now.getTime() - 1).toISOString();
-    expect(eligibleCandidates(candidates, now).map((item) => item.symbol)).toEqual([
-      "AAPL",
-      "TSLA"
-    ]);
+    expect(eligibleCandidates(candidates, now)).toHaveLength(9);
   });
 
   it("rejects an invented asset returned by the model", async () => {
@@ -27,6 +24,12 @@ describe("deterministic feed policy", () => {
       epochId: "2026-W30",
       policyVersion: "investmade-policy/v1" as const,
       budget: DEFAULT_BUDGET,
+      preferences: {
+        cadence: "weekly" as const,
+        ticketSizeUsd: 10,
+        riskMode: "balanced" as const,
+        assetClasses: ["CRYPTO", "STOCK_TOKEN"] as const
+      },
       candidates
     };
     const input = feedInputSchema.parse({
@@ -53,6 +56,12 @@ describe("deterministic feed policy", () => {
       epochId: "2026-W30",
       policyVersion: "investmade-policy/v1" as const,
       budget: DEFAULT_BUDGET,
+      preferences: {
+        cadence: "weekly" as const,
+        ticketSizeUsd: 10,
+        riskMode: "balanced" as const,
+        assetClasses: ["CRYPTO", "STOCK_TOKEN"] as const
+      },
       candidates
     };
     const input = feedInputSchema.parse({

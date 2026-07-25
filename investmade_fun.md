@@ -13,7 +13,7 @@
 
 investmade.fun turns a fixed weekly investing budget into a short, Tinder-like decision session.
 
-A user funds or holds a weekly budget such as **100 USDG** in the connected wallet, chooses a cadence, and receives **up to ten** private AI-generated asset cards. Each right swipe allocates **10 USDG** to that asset; each left swipe skips it. At the end, the user reviews the basket and confirms execution through the Uniswap Trading API on Robinhood Chain.
+A user holds a period budget such as **100 USDG** in the connected wallet, chooses a daily, weekly, or monthly cadence and a per-card ticket size, and receives a bounded private AI-generated asset feed. Each right swipe allocates the selected ticket size to that asset; each left swipe skips it. At the end, the user reviews the basket and confirms execution through the Uniswap Trading API on Robinhood Chain.
 
 The core MVP is non-custodial: the USDG remains in the user’s wallet until the user authorizes execution. “Top up” therefore means funding the connected Robinhood Chain wallet, not depositing into a investmade.fun-controlled account or contract.
 
@@ -107,9 +107,9 @@ Source: [Robinhood Chain contracts](https://docs.robinhood.com/chain/contracts/)
 
 USDC bridging or conversion is out of scope unless an exact live route is verified.
 
-### 3.2 Stock symbols are AAPL and TSLA
+### 3.2 Canonical Robinhood Chain assets
 
-Use the canonical Robinhood symbols and contract registry. Do not use invented names such as `AAPLX`, `APPLEX`, `TSLAX`, or `TESLAX`.
+Use the canonical Robinhood symbols and contract registry. Do not use invented names such as `AAPLX`, `APPLEX`, `TSLAX`, or `TESLAX`. The stock registry is sourced from Uniswap’s Robinhood Stocks list; the local demo feed contains ten cards: WETH plus the first nine listed stock tokens. Every live card’s displayed unit price is derived from its exact USDG-to-asset Uniswap quote.
 
 Live registry examples checked on 25 July 2026:
 
@@ -170,42 +170,48 @@ Authenticate the wallet with SIWE first, then bind a World proof to that authent
 
 ### 5.1 Onboarding
 
-1. User connects an EVM wallet.
-2. Backend issues a nonce.
-3. User signs in with Ethereum.
-4. Backend verifies the SIWE message and creates an authenticated session.
-5. User completes World Proof of Human.
-6. Backend binds the verified World session to the authenticated investmade.fun account.
-7. User acknowledges tokenized-stock eligibility and product-risk disclosures.
-8. App detects Robinhood Chain and requests a network switch if needed.
-9. App checks:
+1. User selects an investment frequency: every day, every week, or every month.
+2. User selects a ticket size: 2 USDG, 10 USDG, 25 USDG, or another whole USDG amount from 1 to 100.
+3. User selects a risk mode: conservative, balanced, or degen.
+4. User selects crypto, tokenized stocks, or both.
+5. User acknowledges that AI output is a ranking rather than financial advice, assets can lose
+   value, stock tokens depend on eligibility, and every trade requires wallet approval.
+6. User authenticates with Privy using an external or embedded EVM wallet.
+7. Backend verifies the Privy access token and confirms the selected wallet is linked to that user.
+8. User completes World Proof of Human.
+9. Backend binds the verified World session to the authenticated investmade.fun account.
+10. App detects Robinhood Chain and requests a network switch if needed.
+11. App checks:
    - USDG balance;
    - ETH gas balance;
    - supported batching capabilities;
    - existing Permit2 approval state.
 
-World verification should be a one-time onboarding action with optional continuity checks, not a replacement for wallet authentication.
+The first-time answers are a versioned, minimal client preference record and are submitted to the
+backend when generating a feed. Cadence determines the idempotent session epoch; ticket size
+determines exact quote and allocation amounts; allowed asset classes filter the deterministic
+candidate set before private inference. World verification should be a one-time onboarding action
+with optional continuity checks, not a replacement for Privy wallet authentication.
 
-### 5.2 Configure the weekly plan
+### 5.2 Configure the investment plan
 
 The user selects:
 
-- Cadence: weekly for the MVP.
-- Weekly budget: for example, 100 USDG.
-- Card size: for example, 10 USDG.
-- Maximum cards: ten.
+- Cadence: daily, weekly, or monthly.
+- Period budget limit: 100 USDG.
+- Ticket size: 2 USDG, 10 USDG, 25 USDG, or a whole custom amount from 1 to 100 USDG.
+- Maximum cards: the lower of ten or `floor(period budget / ticket size)`.
 - Risk mode: conservative, balanced, or degen.
 - Allowed asset classes: crypto, tokenized stocks, or both.
-- Optional exclusions: individual assets or categories.
 - Slippage ceiling.
 
 The backend derives:
 
 ```text
-maximum accepted cards = floor(weekly budget / card size)
+maximum accepted cards = min(10, floor(period budget / ticket size))
 ```
 
-The feed contains at most one card per unique asset. Ten is a budget/capacity maximum, not a promise that ten distinct executable assets will always exist. If only three candidates pass the live gates, show three cards and keep the other 70 USDG unspent.
+The feed contains at most one card per unique asset. Ten is a capacity maximum, not a promise that ten distinct executable assets will always exist. If only three candidates pass the live gates, show three cards and keep the unallocated USDG in the wallet.
 
 For the demo:
 
@@ -567,7 +573,7 @@ Example:
 ```json
 {
   "assetId": "rh:4663:AAPL",
-  "epochId": "2026-W31",
+  "epochId": "W:2026-W31",
   "rightSwipes": 37,
   "totalSwipes": 64,
   "scoreBps": 5781,
@@ -599,8 +605,8 @@ Only retained candidates enter the 0G prompt.
 
 - Candidate assets and normalized evidence.
 - Current portfolio weights.
-- User risk preference and exclusions.
-- Weekly budget and card size.
+- User cadence, ticket size, risk preference, and allowed asset classes.
+- Period budget limit and derived card capacity.
 - Market-regime features.
 - CrowdScore aggregates.
 - Policy version.
@@ -739,14 +745,15 @@ Sources: [Chat Completions](https://docs.0g.ai/developer-hub/building-on-0g/comp
   "budget": {
     "token": "USDG",
     "decimals": 6,
-    "weeklyBudgetBaseUnits": "100000000",
-    "slotBudgetBaseUnits": "10000000",
-    "maxCards": 10
+    "periodBudgetBaseUnits": "100000000",
+    "slotBudgetBaseUnits": "25000000",
+    "maxCards": 4
   },
   "preferences": {
+    "cadence": "weekly",
+    "ticketSizeUsd": 25,
     "riskMode": "balanced",
-    "assetClasses": ["CRYPTO", "STOCK_TOKEN"],
-    "excludedAssetIds": []
+    "assetClasses": ["CRYPTO", "STOCK_TOKEN"]
   },
   "portfolio": [
     {
@@ -1388,15 +1395,16 @@ Sources:
   "userRef": "internal-pseudonym",
   "wallet": "0x...",
   "chainId": 4663,
-  "cadenceSeconds": 604800,
+  "cadence": "weekly",
   "stableToken": {
     "symbol": "USDG",
     "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
     "decimals": 6
   },
-  "weeklyBudgetBaseUnits": "100000000",
-  "slotBudgetBaseUnits": "10000000",
-  "maxCards": 10,
+  "periodBudgetBaseUnits": "100000000",
+  "ticketSizeUsd": 25,
+  "slotBudgetBaseUnits": "25000000",
+  "maxCards": 4,
   "riskMode": "balanced",
   "stockTokensEnabled": true,
   "autonomousMode": false,

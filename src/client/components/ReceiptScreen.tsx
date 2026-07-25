@@ -32,7 +32,10 @@ export function ReceiptScreen({
         {selected.map((candidate, index) => (
           <div className="receipt-row" key={candidate.assetId}>
             <AssetMark symbol={candidate.symbol} size="sm" />
-            <b>{candidate.symbol}<small>10 USDG input</small></b>
+            <b>
+              {candidate.symbol}
+              <small>{formatUnits(BigInt(candidate.quote.amountInBaseUnits), 6)} USDG input</small>
+            </b>
             <span className="status-complete">
               <Check />{" "}
               {record.settledOutputs[index]

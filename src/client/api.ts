@@ -1,4 +1,9 @@
-import type { Candidate, ExecutionPlan, FeedOutput } from "../domain/schemas";
+import type {
+  Candidate,
+  ExecutionPlan,
+  FeedOutput,
+  OnboardingPreferences
+} from "../domain/schemas";
 
 export interface WeeklySession {
   id: string;
@@ -109,10 +114,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(proof)
     }),
-  openSession: () => request<WeeklySession>("/api/sessions/open", { method: "POST" }),
-  generateFeed: (sessionId: string) =>
-    request<FeedResponse>(`/api/sessions/${sessionId}/feed`, { method: "POST" }),
-  prepareExecution: (sessionId: string, assetIds: string[]) =>
+  openSession: (cadence: OnboardingPreferences["cadence"]) =>
+    request<WeeklySession>("/api/sessions/open", {
+      method: "POST",
+      body: JSON.stringify({ cadence })
+    }),
+  generateFeed: (sessionId: string, preferences: OnboardingPreferences) =>
+    request<FeedResponse>(`/api/sessions/${sessionId}/feed`, {
+      method: "POST",
+      body: JSON.stringify(preferences)
+    }),
+  prepareExecution: (sessionId: string, assetIds: string[], ticketSizeUsd: number) =>
     request<ExecutionRecord>("/api/executions/prepare", {
       method: "POST",
       body: JSON.stringify({
@@ -121,7 +133,7 @@ export const api = {
         inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
         selections: assetIds.map((assetId) => ({
           assetId,
-          amountInBaseUnits: "10000000"
+          amountInBaseUnits: String(ticketSizeUsd * 1_000_000)
         })),
         slippageBps: 50
       })

@@ -2,10 +2,10 @@ import {
   ASSET_REGISTRY,
   MAX_CARDS,
   MAX_PRICE_IMPACT_BPS,
+  PERIOD_BUDGET,
   POLICY_VERSION,
   QUOTE_TTL_SECONDS,
-  SLOT_BUDGET,
-  WEEKLY_BUDGET
+  USDG_DECIMALS
 } from "./constants.js";
 import { sha256 } from "./canonical.js";
 import {
@@ -72,15 +72,18 @@ export function validateFeed(
     if (seen.has(card.assetId)) {
       throw new PolicyError("DUPLICATE_ASSET", `Asset ${card.assetId} appeared more than once.`);
     }
-    if (BigInt(card.amountInBaseUnits) !== SLOT_BUDGET) {
-      throw new PolicyError("INVALID_SLOT_SIZE", "Every card must use the fixed 10 USDG slot.");
+    if (card.amountInBaseUnits !== input.budget.slotBudgetBaseUnits) {
+      throw new PolicyError("INVALID_SLOT_SIZE", "Every card must use the selected ticket size.");
     }
     seen.add(card.assetId);
     total += BigInt(card.amountInBaseUnits);
   }
 
-  if (feed.cards.length > MAX_CARDS || total > WEEKLY_BUDGET) {
-    throw new PolicyError("BUDGET_EXCEEDED", "The feed exceeds the weekly budget.");
+  if (
+    feed.cards.length > input.budget.maxCards ||
+    total > BigInt(input.budget.periodBudgetBaseUnits)
+  ) {
+    throw new PolicyError("BUDGET_EXCEEDED", "The feed exceeds the period budget.");
   }
   return feed;
 }
@@ -93,6 +96,11 @@ export function validateExecutionSelection(
   const eligible = new Set(eligibleCandidates(candidates, now).map((candidate) => candidate.assetId));
   const seen = new Set<string>();
   let total = 0n;
+  const slot = BigInt(request.selections[0]?.amountInBaseUnits ?? "0");
+  const unit = 10n ** BigInt(USDG_DECIMALS);
+  if (slot < unit || slot > PERIOD_BUDGET || slot % unit !== 0n) {
+    throw new PolicyError("INVALID_SLOT_SIZE", "Ticket size must be a whole USDG amount from 1 to 100.");
+  }
 
   for (const selection of request.selections) {
     if (!eligible.has(selection.assetId)) {
@@ -101,23 +109,23 @@ export function validateExecutionSelection(
     if (seen.has(selection.assetId)) {
       throw new PolicyError("DUPLICATE_ASSET", "Each asset may appear only once.");
     }
-    if (BigInt(selection.amountInBaseUnits) !== SLOT_BUDGET) {
+    if (BigInt(selection.amountInBaseUnits) !== slot) {
       throw new PolicyError("INVALID_SLOT_SIZE", "Execution must preserve the authorized slot size.");
     }
     seen.add(selection.assetId);
     total += BigInt(selection.amountInBaseUnits);
   }
 
-  if (request.selections.length > MAX_CARDS || total > WEEKLY_BUDGET) {
-    throw new PolicyError("BUDGET_EXCEEDED", "Execution exceeds the weekly budget.");
+  if (request.selections.length > MAX_CARDS || total > PERIOD_BUDGET) {
+    throw new PolicyError("BUDGET_EXCEEDED", "Execution exceeds the period budget.");
   }
 }
 
-export function policyHash(): `sha256:${string}` {
+export function policyHash(slotBudgetBaseUnits: string): `sha256:${string}` {
   return sha256({
     policyVersion: POLICY_VERSION,
-    weeklyBudget: WEEKLY_BUDGET.toString(),
-    slotBudget: SLOT_BUDGET.toString(),
+    periodBudget: PERIOD_BUDGET.toString(),
+    slotBudget: slotBudgetBaseUnits,
     maxCards: MAX_CARDS,
     maxPriceImpactBps: MAX_PRICE_IMPACT_BPS
   });
