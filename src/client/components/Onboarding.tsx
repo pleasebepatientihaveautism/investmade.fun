@@ -660,7 +660,7 @@ function isPresetTicket(value: number): value is 2 | 10 | 25 {
 }
 
 function maxCardsFor(ticketSizeUsd: number) {
-  return Math.min(10, Math.floor(100 / ticketSizeUsd));
+  return Math.min(3, Math.floor(100 / ticketSizeUsd));
 }
 
 function cadenceLabel(cadence: OnboardingPreferences["cadence"]) {

@@ -3,7 +3,7 @@ import type { Candidate } from "../../domain/schemas";
 import { AssetMark } from "./AssetMark";
 import { Shield } from "./Icons";
 
-const CARD_DOTS = Array.from({ length: 10 }, (_, dot) => `card-dot-${dot + 1}`);
+const CARD_DOTS = ["card-dot-1", "card-dot-2", "card-dot-3"];
 const SWIPE_THRESHOLD_PX = 72;
 type DecisionFeedback = "invest" | "skip";
 const usdFormatter = new Intl.NumberFormat("en-US", {

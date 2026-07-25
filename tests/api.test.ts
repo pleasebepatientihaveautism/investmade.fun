@@ -47,8 +47,8 @@ describe("core API flow", () => {
       .post(`/api/sessions/${opened.body.id}/feed`)
       .send(onboardingPreferences)
       .expect(200);
-    expect(feed.body.feed.cards).toHaveLength(10);
-    expect(feed.body.candidates).toHaveLength(10);
+    expect(feed.body.feed.cards).toHaveLength(3);
+    expect(feed.body.candidates).toHaveLength(3);
     expect(feed.body.candidates[0].quote.unitPriceUsd).toBe("3212.335367");
     expect(feed.body.proof.teeVerified).toBe(false);
 
@@ -93,7 +93,7 @@ describe("core API flow", () => {
       })
       .expect(200);
 
-    expect(feed.body.candidates).toHaveLength(9);
+    expect(feed.body.candidates).toHaveLength(3);
     expect(
       feed.body.candidates.every((candidate: { kind: string }) => candidate.kind === "STOCK_TOKEN")
     ).toBe(true);
@@ -122,8 +122,8 @@ describe("core API flow", () => {
       .send({ ...onboardingPreferences, cadence: "monthly", ticketSizeUsd: 25 })
       .expect(200);
 
-    expect(feed.body.candidates).toHaveLength(4);
-    expect(feed.body.feed.cards).toHaveLength(4);
+    expect(feed.body.candidates).toHaveLength(3);
+    expect(feed.body.feed.cards).toHaveLength(3);
     expect(feed.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "25000000")).toBe(true);
   });
 
@@ -135,14 +135,14 @@ describe("core API flow", () => {
       .post(`/api/sessions/${opened.body.id}/feed`)
       .send({ ...onboardingPreferences, ticketSizeUsd: 0.1 })
       .expect(200);
-    expect(tenth.body.feed.cards).toHaveLength(10);
+    expect(tenth.body.feed.cards).toHaveLength(3);
     expect(tenth.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "100000")).toBe(true);
 
     const quarter = await request(app)
       .post(`/api/sessions/${opened.body.id}/feed`)
       .send({ ...onboardingPreferences, ticketSizeUsd: 0.25 })
       .expect(200);
-    expect(quarter.body.feed.cards).toHaveLength(10);
+    expect(quarter.body.feed.cards).toHaveLength(3);
     expect(quarter.body.feed.cards.every((card: { amountInBaseUnits: string }) => card.amountInBaseUnits === "250000")).toBe(true);
   });
 

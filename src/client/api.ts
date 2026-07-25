@@ -67,6 +67,7 @@ export interface PublicConfig {
   executionMode: "demo" | "local-live" | "live";
   chainId: 4663;
   stableToken: "USDG";
+  maxCards: number;
   privy: { appId: string };
   world: null | { appId: string; rpId: string; action: string };
 }

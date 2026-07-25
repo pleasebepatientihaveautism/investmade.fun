@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, MAX_CARDS } from "../../domain/constants.js";
+import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET } from "../../domain/constants.js";
 import { sha256 } from "../../domain/canonical.js";
 import { unitPriceUsdFromQuote } from "../../domain/price.js";
 import type { Candidate, ExecutionRequest, FeedInput, FeedOutput } from "../../domain/schemas.js";
@@ -84,7 +84,11 @@ export class DemoProvider
   ): Promise<Candidate[]> {
     const expiresAt = new Date(now.getTime() + 60_000).toISOString();
     const amount = BigInt(amountInBaseUnits);
-    return Object.values(ASSET_REGISTRY).slice(0, MAX_CARDS).map((asset) => {
+    // The API applies the three-card policy after personalization filtering so
+    // a stocks-only feed can still offer three stock tokens.
+    return Object.values(ASSET_REGISTRY)
+      .filter((asset) => Boolean(outputs[asset.symbol] && demoMeta[asset.symbol]))
+      .map((asset) => {
       const baseEstimate = outputs[asset.symbol];
       const meta = demoMeta[asset.symbol];
       if (!baseEstimate || !meta) throw new Error(`DEMO_FIXTURE_MISSING_${asset.symbol}`);

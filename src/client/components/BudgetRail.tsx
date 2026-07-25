@@ -10,7 +10,8 @@ export function BudgetRail({
   onReview,
   executionMode,
   ticketSizeUsd,
-  cadence
+  cadence,
+  maxCards
 }: {
   selected: Candidate[];
   onRemove: (assetId: string) => void;
@@ -18,9 +19,9 @@ export function BudgetRail({
   executionMode: "demo" | "local-live" | "live";
   ticketSizeUsd: number;
   cadence: OnboardingPreferences["cadence"];
+  maxCards: number;
 }) {
   const remaining = Math.round((100 - selected.length * ticketSizeUsd) * 100) / 100;
-  const maxCards = Math.min(10, Math.floor(100 / ticketSizeUsd));
   return (
     <aside className="budget-rail" aria-label={`This ${periodName(cadence)}'s budget`}>
       <h2>This {periodName(cadence)}’s budget</h2>

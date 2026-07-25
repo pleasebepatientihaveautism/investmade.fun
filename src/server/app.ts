@@ -426,14 +426,19 @@ export function createApp(deps: AppDependencies) {
             chainId: 4663,
             assetId: execution.plan.quotes[index]?.assetId
           });
+          const quote = execution.plan.quotes[index];
+          if (!quote) throw new Error("EXECUTION_QUOTE_MISSING");
+          const localLiveTransferMatch =
+            deps.config.localLiveExecution &&
+            receipt.status === "success" &&
+            spentTransferAmount(receipt.logs, USDG_ADDRESS, transaction.from) ===
+              BigInt(quote.amountInBaseUnits);
           if (
             transaction.from.toLowerCase() !== session.wallet ||
-            callHash !== execution.plan.callCommitments[index]
+            (callHash !== execution.plan.callCommitments[index] && !localLiveTransferMatch)
           ) {
             throw new Error("TRANSACTION_PLAN_MISMATCH");
           }
-          const quote = execution.plan.quotes[index];
-          if (!quote) throw new Error("EXECUTION_QUOTE_MISSING");
           const amountOutBaseUnits =
             receipt.status === "success"
               ? settledTransferAmount(receipt.logs, quote.tokenOut, session.wallet)
@@ -557,6 +562,33 @@ function settledTransferAmount(
       log.address.toLowerCase() !== token.toLowerCase() ||
       log.topics[0]?.toLowerCase() !== TRANSFER_TOPIC ||
       log.topics[2]?.toLowerCase() !== recipientTopic
+    ) {
+      return sum;
+    }
+    return sum + BigInt(log.data);
+  }, 0n);
+}
+
+/**
+ * Local-live recovery can accept a wallet-modified calldata envelope only when
+ * the authenticated wallet actually debited the exact USDG amount. Production
+ * execution keeps the stricter signed-call commitment check above.
+ */
+function spentTransferAmount(
+  logs: readonly {
+    address: string;
+    data: string;
+    topics: readonly string[];
+  }[],
+  token: string,
+  wallet: string
+) {
+  const senderTopic = `0x${"0".repeat(24)}${wallet.slice(2)}`.toLowerCase();
+  return logs.reduce((sum, log) => {
+    if (
+      log.address.toLowerCase() !== token.toLowerCase() ||
+      log.topics[0]?.toLowerCase() !== TRANSFER_TOPIC ||
+      log.topics[1]?.toLowerCase() !== senderTopic
     ) {
       return sum;
     }

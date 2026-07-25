@@ -15,6 +15,7 @@ export function ReviewScreen({
   onRemove,
   onBack,
   onSettled,
+  onSessionExpired,
   ticketSizeUsd
 }: {
   session: WeeklySession;
@@ -23,6 +24,7 @@ export function ReviewScreen({
   onRemove: (assetId: string) => void;
   onBack: () => void;
   onSettled: (record: ExecutionRecord) => void;
+  onSessionExpired: () => Promise<{ sessionId: string; assetIds: string[] }>;
   ticketSizeUsd: number;
 }) {
   const { wallets } = useWallets();
@@ -61,7 +63,19 @@ export function ReviewScreen({
       );
       setRecord(prepared);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not prepare execution");
+      const message = caught instanceof Error ? caught.message : "Could not prepare execution";
+      if (message === "SESSION_NOT_FOUND") {
+        try {
+          const recovered = await onSessionExpired();
+          const prepared = await api.prepareExecution(recovered.sessionId, recovered.assetIds, ticketSizeUsd);
+          setRecord(prepared);
+          setError("");
+        } catch (recoveryError) {
+          setError(recoveryError instanceof Error ? recoveryError.message : "Could not renew local session");
+        }
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -107,6 +121,21 @@ export function ReviewScreen({
       onSettled(reconciled);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Wallet execution failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resumeReconciliation() {
+    if (!record) return;
+    setLoading(true);
+    setError("");
+    try {
+      const reconciled = await reconcileUntilTerminal(record.plan.executionId);
+      setRecord(reconciled);
+      onSettled(reconciled);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not verify settlement yet.");
     } finally {
       setLoading(false);
     }
@@ -175,14 +204,22 @@ export function ReviewScreen({
             <button
               type="button"
               className="button button-primary"
-              onClick={record.walletCalls?.length ? confirmLive : settleDemo}
+              onClick={
+                record.status === "SUBMITTED"
+                  ? resumeReconciliation
+                  : record.walletCalls?.length
+                    ? confirmLive
+                    : settleDemo
+              }
               disabled={loading || record.status === "SETTLED"}
             >
               {record.status === "SETTLED"
                 ? "Settled"
                 : loading
                   ? "Confirming…"
-                  : record.walletCalls?.length
+                  : record.status === "SUBMITTED"
+                    ? "Check settlement receipt"
+                    : record.walletCalls?.length
                     ? "Confirm in wallet"
                     : "Simulate wallet confirmation"} <ArrowRight />
             </button>

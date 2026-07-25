@@ -53,7 +53,9 @@ export class LiveCandidateProvider implements CandidateProvider {
     const candidates = await Promise.all(
       Object.values(ASSET_REGISTRY)
         .filter((asset) => !this.options.cryptoOnly || asset.kind === "CRYPTO")
-        .slice(0, MAX_CARDS)
+        // Preserve enough candidates for the API to apply the three-card cap
+        // after a user chooses a single asset class.
+        .slice(0, MAX_CARDS * 2)
         .map(async (asset) => {
         try {
           const contractCode = await this.client.getCode({

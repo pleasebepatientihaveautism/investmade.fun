@@ -3,7 +3,8 @@ export const USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as cons
 export const USDG_DECIMALS = 6;
 export const PERIOD_BUDGET = 100_000_000n;
 export const DEFAULT_SLOT_BUDGET = 10_000_000n;
-export const MAX_CARDS = 10;
+/** A focused basket contains at most three investment decisions per session. */
+export const MAX_CARDS = 3;
 export const MAX_SLIPPAGE_BPS = 50;
 export const MAX_PRICE_IMPACT_BPS = 100;
 export const QUOTE_TTL_SECONDS = 60;

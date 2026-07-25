@@ -17,7 +17,7 @@ describe("deterministic feed policy", () => {
   });
 
   it("rejects an invented asset returned by the model", async () => {
-    const candidates = await new DemoProvider().getCandidates("0x0");
+    const candidates = (await new DemoProvider().getCandidates("0x0")).slice(0, 3);
     const unsigned = {
       schemaVersion: "investmade-feed-input/v1" as const,
       sessionId: "session-1",
@@ -49,7 +49,7 @@ describe("deterministic feed policy", () => {
   });
 
   it("rejects a commitment mismatch", async () => {
-    const candidates = await new DemoProvider().getCandidates("0x0");
+    const candidates = (await new DemoProvider().getCandidates("0x0")).slice(0, 3);
     const unsigned = {
       schemaVersion: "investmade-feed-input/v1" as const,
       sessionId: "session-1",
@@ -75,7 +75,7 @@ describe("deterministic feed policy", () => {
     );
   });
 
-  it("rejects more than ten model cards at the schema boundary", () => {
+  it("rejects more than three model cards at the schema boundary", () => {
     const card = {
       assetId: "rh:4663:WETH",
       action: "BUY",
@@ -91,7 +91,7 @@ describe("deterministic feed policy", () => {
       inputCommitment: `sha256:${"1".repeat(64)}`,
       policyVersion: "investmade-policy/v1",
       regime: "CRYPTO_NEUTRAL",
-      cards: Array.from({ length: 11 }, (_, index) => ({ ...card, rank: index + 1 })),
+      cards: Array.from({ length: 4 }, (_, index) => ({ ...card, rank: index + 1 })),
       warnings: []
     });
     expect(result.success).toBe(false);

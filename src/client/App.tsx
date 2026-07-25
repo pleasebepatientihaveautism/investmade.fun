@@ -88,7 +88,21 @@ export function App({ config }: { config: PublicConfig }) {
   const selected = candidates.filter((candidate) => selectedIds.includes(candidate.assetId));
   const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
   const cadence = preferences?.cadence ?? "weekly";
-  const maxCards = Math.min(10, Math.floor(100 / ticketSizeUsd));
+  const maxCards = Math.min(config.maxCards, Math.floor(100 / ticketSizeUsd));
+
+  const recoverReviewSession = useCallback(async () => {
+    if (!preferences) throw new Error("PREFERENCES_REQUIRED");
+    const opened = await api.openSession(preferences.cadence);
+    const generated = await api.generateFeed(opened.id, preferences);
+    const available = new Set(generated.candidates.map((candidate) => candidate.assetId));
+    const retained = selectedIds.filter((assetId) => available.has(assetId));
+    const assetIds = retained.length ? retained : generated.candidates.slice(0, 1).map((candidate) => candidate.assetId);
+    if (!assetIds.length) throw new Error("NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES");
+    setSession(opened);
+    setFeed(generated);
+    setSelectedIds(assetIds);
+    return { sessionId: opened.id, assetIds };
+  }, [preferences, selectedIds]);
 
   function decide(add: boolean) {
     if (!current) return;
@@ -175,6 +189,7 @@ export function App({ config }: { config: PublicConfig }) {
             setSettlement(record);
             setView("receipts");
           }}
+          onSessionExpired={recoverReviewSession}
           ticketSizeUsd={ticketSizeUsd}
         />
       ) : (
@@ -229,17 +244,18 @@ export function App({ config }: { config: PublicConfig }) {
               </div>
             )}
           </section>
-          <BudgetRail
-            selected={selected}
-            onRemove={remove}
-            onReview={() => {
+                  <BudgetRail
+                    selected={selected}
+                    onRemove={remove}
+                    onReview={() => {
               scrollToTop();
               setStage("review");
             }}
-            executionMode={config.executionMode}
-            ticketSizeUsd={ticketSizeUsd}
-            cadence={cadence}
-          />
+                    executionMode={config.executionMode}
+                    ticketSizeUsd={ticketSizeUsd}
+                    cadence={cadence}
+                    maxCards={maxCards}
+                  />
           <section className="trust-strip">
             <Shield /><b>Non-custodial by design</b><span>You control your keys</span><span>We never hold funds</span><span>Every trade requires your signature</span>
           </section>
