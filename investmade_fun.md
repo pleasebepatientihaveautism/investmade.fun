@@ -137,13 +137,16 @@ canonical asset registry
 
 An address in a token list does not prove that a 10 USDG route exists.
 
-### 3.4 “One confirmation” is not automatically one atomic transaction
+### 3.4 One confirmation is one atomic Investmade Wallet operation
 
-For multiple independent swaps, the honest promise is:
+The implemented buy path uses a Privy embedded signer controlling a canonical ERC-4337 Investmade
+Wallet on Robinhood Chain. The app orders approval reset/approval, Permit2, and every Uniswap swap
+inside one smart-account call array. Privy prepares the complete user operation before showing one
+confirmation. If any call reverts, the complete basket reverts.
 
-> “One wallet confirmation when the wallet and batching route support it; otherwise a clear multi-confirmation fallback.”
-
-`POST /swap_5792` produces EIP-5792 calls for a quote. It does not automatically merge ten separately obtained quotes into one atomic onchain transaction. Strict atomic batching requires a compatible smart account, wallet batch support, or additional contract work.
+Standard-EOA sequential execution is deliberately not a live-buy fallback. External wallets such as
+Rainbow can authenticate and fund the Investmade Wallet, but they do not execute independent basket
+legs.
 
 ### 3.5 World ID is verification, not login or spend authority
 
@@ -176,15 +179,14 @@ Authenticate the wallet with SIWE first, then bind a World proof to that authent
 4. User selects crypto, tokenized stocks, or both.
 5. User acknowledges that AI output is a ranking rather than financial advice, assets can lose
    value, stock tokens depend on eligibility, and every trade requires wallet approval.
-6. User authenticates with Privy using an external or embedded EVM wallet.
-7. Backend verifies the Privy access token and confirms the selected wallet is linked to that user.
+6. User authenticates with Privy; Privy creates an embedded signer and the canonical Investmade smart wallet.
+7. Backend verifies the Privy access token and confirms the Investmade smart wallet belongs to that user.
 8. User completes World Proof of Human.
 9. Backend binds the verified World session to the authenticated investmade.fun account.
-10. App detects Robinhood Chain and requests a network switch if needed.
+10. App activates a Privy smart-wallet client for Robinhood Chain.
 11. App checks:
    - USDG balance;
-   - ETH gas balance;
-   - supported batching capabilities;
+   - smart-wallet activation and bundler/paymaster readiness;
    - existing Permit2 approval state.
 
 The first-time answers are a versioned, minimal client preference record and are submitted to the
@@ -287,10 +289,9 @@ Execution modes:
 
 | Mode | User experience | MVP status |
 |---|---|---|
-| Standard EOA | Approval/signature plus one transaction per route as required | Required fallback |
-| EIP-5792 wallet | Wallet may present batched calls in one confirmation | Target experience |
-| EIP-7702/compatible delegation | Smoother chained or batched execution after setup | Stretch |
-| ERC-4337 smart account | Programmable batch and sponsored gas; atomicity depends on the account implementation | Stretch |
+| Privy ERC-4337 Investmade Wallet | One preflighted operation containing every approval, Permit2, and swap call | Implemented buy path |
+| Standard EOA / external wallet | Authentication and funding only; never sequential basket execution | Supported account role |
+| EIP-7702/compatible delegation | Possible future direct-external-wallet path | Stretch |
 
 After broadcast, investmade.fun waits for terminal chain/order status. An API response or transaction hash alone is not settlement proof.
 
@@ -1067,20 +1068,14 @@ Source: [Uniswap Permit2 approval](https://developers.uniswap.org/docs/trading/s
 
 ### 11.7 One-confirmation strategy
 
-Preferred order:
+Implemented order:
 
-1. Detect EIP-5792 wallet support.
-2. Use [`POST /swap_5792`](https://developers.uniswap.org/docs/api-reference/create_swap_5792_transaction) for compatible quote calls.
-3. Require atomic capability before presenting the basket as one atomic operation.
-4. Submit compatible calls with the wallet’s EIP-5792 batching path.
-5. Fall back to explicit per-leg confirmation.
-
-Alternative after one-time EIP-7702/Calibur setup:
-
-1. `POST /wallet/check_delegation`.
+1. Create a Privy embedded signer and canonical ERC-4337 Investmade Wallet.
 2. Request each AMM quote with `generatePermitAsTransaction: true`.
-3. Call `POST /swap_7702` for each leg.
-4. Call [`POST /wallet/encode_7702`](https://developers.uniswap.org/docs/api-reference/wallet_encode_7702) with the same-chain transaction list.
+3. Order approval reset/approval, deduplicated Permit2 transactions, and swap calldata.
+4. Call `prepareUserOperation({ calls })` for a full-batch preflight.
+5. Call `sendTransaction({ calls })` once and persist the resulting operation transaction hash.
+6. Block execution if the smart-wallet client, preflight, balance, or fresh quote is unavailable.
 5. Sign and broadcast the returned encoded transaction.
 
 This does not merge asynchronous UniswapX orders. If any leg routes to `DUTCH_V2`, `DUTCH_V3`, or `PRIORITY`, do not claim a one-transaction basket.
@@ -1570,7 +1565,7 @@ Do not include raw World identifiers or the 0G chat ID in a public receipt.
 | Part | Why |
 |---|---|
 | 10 USDG stock-token execution | Token existence does not guarantee AMM liquidity |
-| One-confirmation basket | Wallet capability, multiple quotes, approvals, and partial failure |
+| One-confirmation basket | Smart-wallet activation, multiple quotes, ordered approvals, and full-operation preflight |
 | World AgentKit prize fit | Must affect real human-backed agent authorization |
 | Autonomous trading | Needs a separate enforceable mandate/smart account |
 | Stock eligibility | Legal/jurisdiction rules exceed a simple World proof |
@@ -1607,7 +1602,8 @@ Critical pre-build gates:
 3. World ID and AgentKit registration/challenge if World is selected.
 4. Robinhood asset/oracle state.
 
-Wallet batching, independent 0G verification, full Sell All, and The Graph are later conditional tests.
+Independent 0G verification, full Sell All, and The Graph are later conditional tests. Atomic
+smart-wallet batching is a required core gate.
 
 | Timebox | Test | Pass condition | Failure cut |
 |---:|---|---|---|
@@ -1619,7 +1615,7 @@ Wallet batching, independent 0G verification, full Sell All, and The Graph are l
 | 30 min | 0G independent proof | `processResponse(...) === true` | Keep Router proof and label limitation |
 | 60 min | World ID | SIWE-bound Proof of Human verifies | Cut CrowdScore uniqueness claim |
 | 90 min | AgentKit | Register, lookup, challenge, signed retry, reject unregistered agent | Replace World partner with Graph |
-| 45 min | Wallet batching | Selected wallet supports valid `sendCalls` path | Use multi-confirmation fallback |
+| 45 min | Atomic smart-wallet batching | Privy prepares and sends the full chain-4663 call set once | Block live buy execution |
 | 60 min | End-to-end trade | Funded 1–10 USDG route settles and reconciles | Reduce demo scope to one asset |
 | 45 min | Exit position | One live position exits to USDG | Fix before calling the core MVP complete |
 | 45 min | Graph Studio, optional | Indexed block advances with no indexing errors | Pivot to Substreams or skip Graph |
@@ -1651,7 +1647,7 @@ Cut in this order if time is short:
 3. External social sources; retain CrowdScore and market metrics.
 4. The Graph integration if it is not one of the selected three partners.
 5. Independent 0G proof; retain truthful Router TEE verification.
-6. Strict one-confirmation promise; keep a correct multi-confirmation fallback.
+6. Asset breadth; keep fewer live legs, but retain atomic execution.
 7. Sell All batching; keep one-position exit.
 8. Asset breadth; keep WETH plus one executable stock token.
 9. Ten displayed cards; demonstrate only the unique candidates that pass, with two or three live legs.
@@ -1923,7 +1919,9 @@ Open review:
 
 Confirm in the wallet and show settlement on Robinhood Chain.
 
-If an atomic batching path passed the kill test, execute the two- or three-leg basket. Otherwise, execute one live leg on camera, clearly label the multi-confirmation fallback, and show the other fresh routes in the authorized plan.
+Execute the two- or three-leg basket through the Investmade Wallet with one confirmation. If the
+atomic user-operation preflight fails, stop before signing and show the actionable activation,
+funding, or quote error; do not fall back to sequential transactions.
 
 ### 2:15–2:45 — Receipt and weekly guard
 
@@ -1967,7 +1965,7 @@ The MVP is complete when:
 
 Stretch:
 
-- [ ] One-confirmation EIP-5792 batch.
+- [ ] Direct EIP-7702 external-wallet execution without changing basket semantics.
 - [ ] Independent 0G TEE verification.
 - [ ] Sell All batching.
 - [ ] Bounded autonomous smart-account mandate.
@@ -1983,7 +1981,7 @@ Stretch:
 1. Which Robinhood stock tokens currently require an issuer/permission check?
 2. Are those assets routed through Universal Router 2.1.1 or 2.2.0?
 3. What is the expected official path for a multi-quote weekly basket?
-4. Is EIP-5792 batching across independently refreshed quote calls supported by the target wallet?
+4. Are there Robinhood-specific Permit2 or Universal Router constraints for ERC-4337 callers?
 5. Which stock/USDG pairs have reliable small-size liquidity?
 
 ### 0G

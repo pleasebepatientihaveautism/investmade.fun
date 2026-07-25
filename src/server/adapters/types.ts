@@ -1,7 +1,7 @@
 import type { Candidate, ExecutionRequest, FeedInput, FeedOutput } from "../../domain/schemas.js";
 
 export interface WalletCall {
-  kind: "CANCEL_APPROVAL" | "APPROVAL" | "SWAP";
+  kind: "CANCEL_APPROVAL" | "APPROVAL" | "PERMIT" | "SWAP";
   assetId?: string;
   transaction: {
     to: string;

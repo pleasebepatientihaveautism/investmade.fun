@@ -24,7 +24,7 @@ export class UniswapProvider implements ExecutionProvider {
           true
         );
         const routing = normalizeRouting(raw.body.routing);
-        if (!["CLASSIC", "WRAP", "UNWRAP"].includes(routing)) {
+        if (routing !== "CLASSIC") {
           throw new Error(`UNSUPPORTED_MVP_ROUTING_${routing}`);
         }
         const swapResponse = await fetch("https://trade-api.gateway.uniswap.org/v1/swap", {
@@ -32,8 +32,7 @@ export class UniswapProvider implements ExecutionProvider {
           headers: {
             "Content-Type": "application/json",
             "x-api-key": this.apiKey,
-            "x-universal-router-version": "2.1.1",
-            "x-permit2-disabled": "true"
+            "x-universal-router-version": "2.1.1"
           },
           body: JSON.stringify(swapRequest(raw.body)),
           signal: AbortSignal.timeout(12_000)
@@ -52,13 +51,19 @@ export class UniswapProvider implements ExecutionProvider {
             selection.amountInBaseUnits,
             candidate.contract
           ),
-          swapCall
+          swapCall,
+          permitCall: this.permitCall(raw.body, wallet)
         };
       })
     );
+    const permitCalls = dedupePermitCalls(
+      prepared
+        .map((item) => item.permitCall)
+        .filter((call): call is WalletCall => call !== undefined)
+    );
     return {
       quotes: prepared.map((item) => item.quote),
-      walletCalls: [...approvalCalls, ...prepared.map((item) => item.swapCall)]
+      walletCalls: [...approvalCalls, ...permitCalls, ...prepared.map((item) => item.swapCall)]
     };
   }
 
@@ -87,7 +92,7 @@ export class UniswapProvider implements ExecutionProvider {
       true
     );
     const routing = normalizeRouting(raw.body.routing);
-    if (!["CLASSIC", "WRAP", "UNWRAP"].includes(routing)) {
+    if (routing !== "CLASSIC") {
       throw new Error(`UNSUPPORTED_MVP_ROUTING_${routing}`);
     }
     const swapResponse = await this.swap(raw.body);
@@ -95,6 +100,9 @@ export class UniswapProvider implements ExecutionProvider {
       quote: this.summarizeQuote(raw.body, candidate, amountInBaseUnits, USDG_ADDRESS),
       walletCalls: [
         ...approvalCalls,
+        ...([this.permitCall(raw.body, wallet)].filter(
+          (call): call is WalletCall => call !== undefined
+        )),
         {
           kind: "SWAP" as const,
           assetId: candidate.assetId,
@@ -135,7 +143,7 @@ export class UniswapProvider implements ExecutionProvider {
     candidate: Candidate,
     amountInBaseUnits: string,
     slippageBps: number,
-    proxyApproval: boolean
+    forExecution: boolean
   ) {
     return this.quotePairRaw(
       wallet,
@@ -143,7 +151,7 @@ export class UniswapProvider implements ExecutionProvider {
       candidate.contract,
       amountInBaseUnits,
       slippageBps,
-      proxyApproval
+      forExecution
     );
   }
 
@@ -153,15 +161,14 @@ export class UniswapProvider implements ExecutionProvider {
     tokenOut: string,
     amountInBaseUnits: string,
     slippageBps: number,
-    proxyApproval: boolean
+    forExecution: boolean
   ) {
     const request = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": this.apiKey,
-        "x-universal-router-version": "2.1.1",
-        ...(proxyApproval ? { "x-permit2-disabled": "true" } : {})
+        "x-universal-router-version": "2.1.1"
       },
       body: JSON.stringify({
         type: "EXACT_INPUT",
@@ -171,7 +178,15 @@ export class UniswapProvider implements ExecutionProvider {
         tokenIn,
         tokenOut,
         swapper: wallet,
-        slippageTolerance: slippageBps / 100
+        slippageTolerance: slippageBps / 100,
+        routingPreference: "BEST_PRICE",
+        protocols: ["V2", "V3", "V4"],
+        ...(forExecution
+          ? {
+              generatePermitAsTransaction: true,
+              permitAmount: "FULL"
+            }
+          : {})
       }),
       signal: AbortSignal.timeout(12_000)
     };
@@ -224,8 +239,7 @@ export class UniswapProvider implements ExecutionProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "x-permit2-disabled": "true"
+        "x-api-key": this.apiKey
       },
       body: JSON.stringify({
         walletAddress: wallet,
@@ -259,8 +273,7 @@ export class UniswapProvider implements ExecutionProvider {
       headers: {
         "Content-Type": "application/json",
         "x-api-key": this.apiKey,
-        "x-universal-router-version": "2.1.1",
-        "x-permit2-disabled": "true"
+        "x-universal-router-version": "2.1.1"
       },
       body: JSON.stringify(swapRequest(quoteResponse)),
       signal: AbortSignal.timeout(12_000)
@@ -268,6 +281,14 @@ export class UniswapProvider implements ExecutionProvider {
     const body = (await response.json()) as any;
     if (!response.ok) throw new Error(`UNISWAP_SWAP_${response.status}`);
     return body;
+  }
+
+  private permitCall(body: any, wallet: string): WalletCall | undefined {
+    if (!body?.permitTransaction) return;
+    return {
+      kind: "PERMIT",
+      transaction: validateTransaction(body.permitTransaction, wallet)
+    };
   }
 }
 
@@ -316,7 +337,17 @@ function swapRequest(body: any): Record<string, unknown> {
   }
   return {
     quote: body.quote,
+    ...(body.permitData ? { permitData: body.permitData } : {}),
     safetyMode: "SAFE",
     deadline: Math.floor(Date.now() / 1000) + 60
   };
+}
+
+function dedupePermitCalls(calls: WalletCall[]) {
+  const byTarget = new Map<string, WalletCall>();
+  for (const call of calls) {
+    const target = call.transaction.to.toLowerCase();
+    if (!byTarget.has(target)) byTarget.set(target, call);
+  }
+  return [...byTarget.values()];
 }

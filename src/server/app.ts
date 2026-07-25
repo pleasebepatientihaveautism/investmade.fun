@@ -72,6 +72,7 @@ export function createApp(deps: AppDependencies) {
             "'self'",
             "https://auth.privy.io",
             "https://*.rpc.privy.systems",
+            "https://*.g.alchemy.com",
             "https://explorer-api.walletconnect.com",
             "https://rpc.mainnet.chain.robinhood.com",
             "wss://relay.walletconnect.com",
@@ -299,6 +300,33 @@ export function createApp(deps: AppDependencies) {
       response.status(404).json({ error: "SESSION_NOT_FOUND" });
       return;
     }
+    if (deps.config.liveExecution) {
+      const required = parsed.selections.reduce(
+        (sum, selection) => sum + BigInt(selection.amountInBaseUnits),
+        0n
+      );
+      const available = await chainClient.readContract({
+        address: USDG_ADDRESS,
+        abi: [
+          {
+            type: "function",
+            name: "balanceOf",
+            stateMutability: "view",
+            inputs: [{ name: "account", type: "address" }],
+            outputs: [{ name: "", type: "uint256" }]
+          }
+        ],
+        functionName: "balanceOf",
+        args: [response.locals.wallet as Address]
+      });
+      if (available < required) {
+        response.status(422).json({
+          error: "INSUFFICIENT_SMART_WALLET_USDG",
+          message: "Fund your Investmade Wallet with enough USDG before refreshing quotes."
+        });
+        return;
+      }
+    }
     const slotBudgetBaseUnits = parsed.selections[0]?.amountInBaseUnits;
     const candidates = await deps.candidates.getCandidates(
       response.locals.wallet,
@@ -328,9 +356,9 @@ export function createApp(deps: AppDependencies) {
       authorizedPlanHash: sha256(intent),
       policyHash: policyHash(slotBudgetBaseUnits ?? "0"),
       callCommitments: preparation.walletCalls
-        .filter((call) => call.kind === "SWAP")
         .map((call) =>
           sha256({
+            kind: call.kind,
             to: call.transaction.to.toLowerCase(),
             data: call.transaction.data.toLowerCase(),
             value: call.transaction.value,
@@ -393,10 +421,17 @@ export function createApp(deps: AppDependencies) {
     }
     const hashes = request.body?.transactionHashes;
     const batched = request.body?.batched === true;
+    if (!batched) {
+      response.status(422).json({
+        error: "ATOMIC_BATCH_REQUIRED",
+        message: "Live baskets must be submitted as one atomic smart-wallet transaction."
+      });
+      return;
+    }
     if (
       !Array.isArray(hashes) ||
-      hashes.length !== (batched ? 1 : execution.plan.callCommitments.length) ||
-      (batched && execution.plan.callCommitments.length === 0) ||
+      hashes.length !== 1 ||
+      execution.plan.callCommitments.length === 0 ||
       new Set(hashes).size !== hashes.length ||
       !hashes.every((hash) => /^0x[a-fA-F0-9]{64}$/.test(hash))
     ) {
@@ -409,7 +444,7 @@ export function createApp(deps: AppDependencies) {
         "SUBMITTED",
         hashes,
         [],
-        batched ? "BATCH" : "SEQUENTIAL"
+        "BATCH"
       )
     );
   });
@@ -436,44 +471,51 @@ export function createApp(deps: AppDependencies) {
         return;
       }
       try {
-        const [transaction, receipt] = await Promise.all([
-          chainClient.getTransaction({ hash: hash as `0x${string}` }),
-          chainClient.getTransactionReceipt({ hash: hash as `0x${string}` })
-        ]);
+        const receipt = await chainClient.getTransactionReceipt({
+          hash: hash as `0x${string}`
+        });
+        if (receipt.status !== "success") {
+          response.json(
+            await deps.store.updateExecution(
+              execution.plan.executionId,
+              "FAILED",
+              execution.transactionHashes,
+              execution.plan.quotes.map((quote) => ({
+                assetId: quote.assetId,
+                amountOutBaseUnits: "0",
+                transactionHash: hash,
+                blockNumber: receipt.blockNumber.toString(),
+                status: "failed" as const
+              })),
+              "BATCH"
+            )
+          );
+          return;
+        }
         if (
-          transaction.from.toLowerCase() !== session.wallet ||
-          spentTransferAmount(receipt.logs, USDG_ADDRESS, transaction.from) !==
+          spentTransferAmount(receipt.logs, USDG_ADDRESS, session.wallet) !==
             BigInt(execution.plan.totalInputBaseUnits)
         ) {
           throw new Error("TRANSACTION_PLAN_MISMATCH");
         }
         const settledOutputs = execution.plan.quotes.map((quote) => {
           const amountOutBaseUnits =
-            receipt.status === "success"
-              ? settledTransferAmount(receipt.logs, quote.tokenOut, session.wallet)
-              : 0n;
+            settledTransferAmount(receipt.logs, quote.tokenOut, session.wallet);
+          if (amountOutBaseUnits < BigInt(quote.minimumAmountOut)) {
+            throw new Error("TRANSACTION_PLAN_MISMATCH");
+          }
           return {
             assetId: quote.assetId,
             amountOutBaseUnits: amountOutBaseUnits.toString(),
             transactionHash: hash,
             blockNumber: receipt.blockNumber.toString(),
-            status:
-              receipt.status === "success" && amountOutBaseUnits > 0n
-                ? ("success" as const)
-                : ("failed" as const)
+            status: "success" as const
           };
         });
-        const successCount = settledOutputs.filter((output) => output.status === "success").length;
-        const status =
-          successCount === settledOutputs.length
-            ? "SETTLED"
-            : successCount > 0
-              ? "PARTIAL"
-              : "FAILED";
         response.json(
           await deps.store.updateExecution(
             execution.plan.executionId,
-            status,
+            "SETTLED",
             execution.transactionHashes,
             settledOutputs,
             "BATCH"
@@ -564,6 +606,11 @@ export function createApp(deps: AppDependencies) {
   app.get("/api/executions/:executionId", requireWallet, async (request, response) => {
     const execution = await deps.store.getExecution(String(request.params.executionId));
     if (!execution) {
+      response.status(404).json({ error: "EXECUTION_NOT_FOUND" });
+      return;
+    }
+    const session = await deps.store.getSession(execution.plan.sessionId);
+    if (!session || session.wallet !== response.locals.wallet) {
       response.status(404).json({ error: "EXECUTION_NOT_FOUND" });
       return;
     }

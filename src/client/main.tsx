@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PrivyProvider } from "@privy-io/react-auth";
+import { SmartWalletsProvider } from "@privy-io/react-auth/smart-wallets";
 import { defineChain } from "viem";
 import "@fontsource/archivo-black/400.css";
 import "@fontsource/dm-sans/400.css";
@@ -53,11 +54,13 @@ function Root() {
         defaultChain: robinhoodChain,
         supportedChains: [robinhoodChain],
         embeddedWallets: {
-          ethereum: { createOnLogin: "users-without-wallets" }
+          ethereum: { createOnLogin: "all-users" }
         }
       }}
     >
-      <App config={config} />
+      <SmartWalletsProvider>
+        <App config={config} />
+      </SmartWalletsProvider>
     </PrivyProvider>
   );
 }

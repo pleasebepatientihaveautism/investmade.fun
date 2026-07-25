@@ -14,6 +14,10 @@
 ## Identity and privacy
 
 - [ ] Privy email, external-wallet, and embedded-wallet login flows succeed.
+- [ ] Privy smart wallets are enabled for all users and custom chain `4663` has working Alchemy bundler/paymaster URLs.
+- [ ] A new user receives an embedded signer and a canonical Investmade smart-wallet address.
+- [ ] The complete approval/Permit2/swap call set passes user-operation preflight and opens one confirmation.
+- [ ] A deliberately reverting leg reverts the complete basket and is recorded as failed, never partial.
 - [ ] Missing, expired, malformed, or wrong-app Privy access tokens fail.
 - [ ] A valid token paired with an EVM address not linked to that Privy user fails.
 - [ ] World ID 4.0 production proof succeeds.

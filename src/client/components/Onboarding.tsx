@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useConnectOrCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
+import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
+import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { IDKit, orbLegacy } from "@worldcoin/idkit-core";
 import { isTicketSizeUsd, type OnboardingPreferences } from "../../domain/schemas";
 import type { PublicConfig } from "../api";
@@ -102,12 +103,20 @@ export function Onboarding({
   privyReady: boolean;
 }) {
   const storedPreferences = useMemo(readStoredPreferences, []);
-  const { authenticated, login } = usePrivy();
-  const { connectOrCreateWallet } = useConnectOrCreateWallet();
+  const { authenticated, login, user } = usePrivy();
+  const { createWallet } = useCreateWallet();
+  const { client: smartWalletClient, getClientForChain } = useSmartWallets();
   const { wallets } = useWallets();
-  const activeWallet = wallets.find((candidate) => candidate.linked) ?? wallets[0];
+  const embeddedWallet = wallets.find(
+    (candidate) =>
+      candidate.walletClientType === "privy" || candidate.walletClientType === "privy-v2"
+  );
   const requiresWorldVerification = config.executionMode === "live";
-  const wallet = activeWallet?.address.toLowerCase() ?? "";
+  const wallet = (
+    user?.smartWallet?.address ??
+    smartWalletClient?.account.address ??
+    ""
+  ).toLowerCase();
   const [step, setStep] = useState<Step>(storedPreferences ? "wallet" : "welcome");
   const [draft, setDraft] = useState<PreferenceDraft>(() =>
     storedPreferences
@@ -136,26 +145,22 @@ export function Onboarding({
 
   useEffect(() => {
     if (step !== "wallet" || !completedPreferences) return;
-    if (!authenticated || !activeWallet?.linked) return;
+    if (!authenticated || !embeddedWallet || !wallet || !smartWalletClient) return;
     if (requiresWorldVerification) {
       setStep("world");
       return;
     }
     if (completingDemo.current) return;
     completingDemo.current = true;
-    activeWallet
-      .switchChain(4663)
-      .then(() => onComplete(completedPreferences))
-      .catch((caught) => {
-        completingDemo.current = false;
-        setError(caught instanceof Error ? caught.message : "Could not connect Robinhood Chain.");
-      });
+    onComplete(completedPreferences);
   }, [
-    activeWallet,
     authenticated,
     completedPreferences,
+    embeddedWallet,
     onComplete,
     requiresWorldVerification,
+    smartWalletClient,
+    wallet,
     step
   ]);
 
@@ -168,26 +173,31 @@ export function Onboarding({
         login();
         return;
       }
-      if (!activeWallet) {
-        connectOrCreateWallet();
+      if (!embeddedWallet) {
+        await createWallet();
         return;
       }
-      if (!activeWallet.linked) await activeWallet.loginOrLink();
-      await activeWallet.switchChain(4663);
+      const client =
+        smartWalletClient ?? (await getClientForChain({ id: 4663 }));
+      if (!client?.account.address) throw new Error("SMART_WALLET_NOT_READY");
       if (requiresWorldVerification) setStep("world");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Privy wallet authentication failed.");
+      const message = caught instanceof Error ? caught.message : "";
+      setError(
+        /smart wallet|configured|bundler|chain/i.test(message)
+          ? "Investmade Wallet is not configured for Robinhood Chain yet. Enable chain 4663 in Privy Smart Wallet settings."
+          : message || "Privy wallet activation failed."
+      );
     } finally {
       setBusy(false);
     }
   }
 
   async function verifyHuman() {
-    if (!config.world || !activeWallet || !wallet || !completedPreferences) return;
+    if (!config.world || !wallet || !completedPreferences) return;
     setBusy(true);
     setError("");
     try {
-      await activeWallet.switchChain(4663);
       const rp = await api.worldSignature();
       const request = await IDKit.request({
         app_id: config.world.appId as `app_${string}`,
@@ -264,10 +274,10 @@ export function Onboarding({
             <span className="onboarding-kicker">
               {step === "wallet" ? "Plan saved" : "Final identity check"}
             </span>
-            <h2>{step === "wallet" ? "Connect or create your wallet" : "Verify you’re human"}</h2>
+            <h2>{step === "wallet" ? "Activate your Investmade Wallet" : "Verify you’re human"}</h2>
             <p>
               {step === "wallet"
-                ? "Privy · Robinhood Chain · 4663"
+                ? "One smart wallet · one atomic basket · Robinhood Chain"
                 : "Bound to your authenticated investmade.fun account"}
             </p>
             {completedPreferences ? (
@@ -284,7 +294,11 @@ export function Onboarding({
                 ? "Waiting…"
                 : step === "wallet"
                   ? authenticated
-                    ? "Continue with linked wallet"
+                    ? embeddedWallet
+                      ? smartWalletClient
+                        ? "Investmade Wallet ready"
+                        : "Activate Investmade Wallet"
+                      : "Create Investmade Wallet"
                     : "Continue with Privy"
                   : "Open World verification"}{" "}
               <ArrowRight />

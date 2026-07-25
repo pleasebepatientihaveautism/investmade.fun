@@ -39,7 +39,7 @@ export interface ExecutionRecord {
   }>;
   settledAt?: string;
   walletCalls?: Array<{
-    kind: "CANCEL_APPROVAL" | "APPROVAL" | "SWAP";
+    kind: "CANCEL_APPROVAL" | "APPROVAL" | "PERMIT" | "SWAP";
     assetId?: string;
     transaction: {
       to: string;
@@ -164,6 +164,8 @@ export const api = {
     }),
   reconcile: (executionId: string) =>
     request<ExecutionRecord>(`/api/executions/${executionId}/reconcile`, { method: "POST" }),
+  execution: (executionId: string) =>
+    request<ExecutionRecord>(`/api/executions/${executionId}`),
   prepareExit: (assetId: string, amountInBaseUnits: string) =>
     request<ExitPreparation>(`/api/positions/${encodeURIComponent(assetId)}/exit/quote`, {
       method: "POST",

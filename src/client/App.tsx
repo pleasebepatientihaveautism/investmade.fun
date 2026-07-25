@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight as LucideArrowRight } from "lucide-react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { api, configureApiAuth, type ExecutionRecord, type FeedResponse, type PublicConfig, type WeeklySession } from "./api";
 import { AppShell } from "./components/AppShell";
 import { ArrowRight, Shield } from "./components/Icons";
@@ -13,20 +14,36 @@ import { PositionsScreen } from "./components/PositionsScreen";
 import { AccountScreen } from "./components/AccountScreen";
 import { AssetIconProvider } from "./components/AssetMark";
 import { Confetti } from "./components/magicui/confetti";
-import type { OnboardingPreferences } from "../domain/schemas";
+import type { Candidate, OnboardingPreferences } from "../domain/schemas";
 
 type View = "week" | "positions" | "receipts" | "account";
 type Stage = "loading" | "onboarding" | "swipe" | "review";
 type DecisionFeedback = "invest" | "skip";
 const DEV_CARD_LIMIT_KEY = "investmade:dev-card-limit";
 const DEV_CARD_LIMIT_MAX = 10;
+const LAST_EXECUTION_KEY = "investmade:last-execution";
+const LAST_EXECUTION_CANDIDATES_KEY = "investmade:last-execution-candidates";
 
 export function App({ config }: { config: PublicConfig }) {
-  const { authenticated, getAccessToken, login, logout, ready: privyReady } = usePrivy();
+  const { authenticated, getAccessToken, login, logout, ready: privyReady, user } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
-  const activeWallet = authenticated
-    ? wallets.find((candidate) => candidate.linked)
+  const { client: smartWalletClient } = useSmartWallets();
+  const fundingWallet = authenticated
+    ? wallets.find(
+        (candidate) =>
+          candidate.linked &&
+          candidate.walletClientType !== "privy" &&
+          candidate.walletClientType !== "privy-v2"
+      )
     : undefined;
+  const embeddedWallet = authenticated
+    ? wallets.find(
+        (candidate) =>
+          candidate.walletClientType === "privy" || candidate.walletClientType === "privy-v2"
+      )
+    : undefined;
+  const smartWalletAddress =
+    user?.smartWallet?.address ?? smartWalletClient?.account.address;
   const [view, setView] = useState<View>("week");
   const [stage, setStage] = useState<Stage>("loading");
   const [session, setSession] = useState<WeeklySession>();
@@ -35,19 +52,45 @@ export function App({ config }: { config: PublicConfig }) {
   const [index, setIndex] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [settlement, setSettlement] = useState<ExecutionRecord>();
+  const [receiptCandidates, setReceiptCandidates] = useState<Candidate[]>([]);
   const [error, setError] = useState("");
   const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
   const [devCardLimit, setDevCardLimit] = useState(() => readDevCardLimit(DEV_CARD_LIMIT_MAX));
   const decisionTimer = useRef<number | undefined>(undefined);
-  const wallet = activeWallet?.address.toLowerCase() ?? "";
+  const wallet = smartWalletAddress?.toLowerCase() ?? "";
+  const fundingWalletAddress = fundingWallet?.address.toLowerCase() ?? "";
+  const displayWallet = wallet || fundingWalletAddress;
+  const smartWalletReady = Boolean(wallet && embeddedWallet && smartWalletClient);
 
   useEffect(() => {
     configureApiAuth({
       getAccessToken,
-      getWalletAddress: () => activeWallet?.address
+      getWalletAddress: () => smartWalletAddress
     });
     return () => configureApiAuth(undefined);
-  }, [activeWallet?.address, getAccessToken]);
+  }, [getAccessToken, smartWalletAddress]);
+
+  useEffect(() => {
+    if (!wallet) return;
+    const executionId = localStorage.getItem(lastExecutionKey(wallet));
+    if (!executionId) return;
+    setReceiptCandidates(readReceiptCandidates(wallet));
+    let cancelled = false;
+    api.execution(executionId)
+      .then(async (record) => {
+        if (cancelled) return;
+        setSettlement(record);
+        if (record.status !== "SUBMITTED") return;
+        const reconciled = await api.reconcile(executionId);
+        if (!cancelled) setSettlement(reconciled);
+      })
+      .catch(() => {
+        localStorage.removeItem(lastExecutionKey(wallet));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wallet]);
 
   const loadSession = useCallback(async (preferences: OnboardingPreferences) => {
     setError("");
@@ -151,7 +194,7 @@ export function App({ config }: { config: PublicConfig }) {
       <AppShell
       active={view}
       onNavigate={navigate}
-      wallet={wallet}
+      wallet={displayWallet}
       onWallet={authenticated ? logout : login}
       walletReady={privyReady}
     >
@@ -164,9 +207,14 @@ export function App({ config }: { config: PublicConfig }) {
       ) : view === "receipts" ? (
         <ReceiptScreen
           record={settlement}
-          selected={selected}
+          selected={receiptCandidates.length ? receiptCandidates : selected}
           feed={feed}
           demoMode={config.demoMode}
+          onResume={async () => {
+            if (!settlement) return;
+            const reconciled = await api.reconcile(settlement.plan.executionId);
+            setSettlement(reconciled);
+          }}
           onStartNextBasket={() => {
             if (preferences) {
               void loadSession(preferences);
@@ -183,6 +231,8 @@ export function App({ config }: { config: PublicConfig }) {
       ) : view === "account" && preferences ? (
         <AccountScreen
           wallet={wallet}
+          fundingWallet={fundingWalletAddress}
+          smartWalletReady={smartWalletReady}
           preferences={preferences}
           developerMode={config.executionMode === "local-live"}
           devCardLimit={devCardLimit}
@@ -209,10 +259,21 @@ export function App({ config }: { config: PublicConfig }) {
           }}
           onSettled={(record) => {
             setSettlement(record);
+            setReceiptCandidates(selected);
             setView("receipts");
           }}
           onSessionExpired={recoverReviewSession}
           ticketSizeUsd={ticketSizeUsd}
+          wallet={wallet}
+          smartWalletReady={smartWalletReady}
+          onExecutionChange={(record) => {
+            setSettlement(record);
+            setReceiptCandidates(selected);
+            if (wallet) {
+              localStorage.setItem(lastExecutionKey(wallet), record.plan.executionId);
+              localStorage.setItem(lastExecutionCandidatesKey(wallet), JSON.stringify(selected));
+            }
+          }}
         />
       ) : (
         <main className="swipe-page">
@@ -305,4 +366,21 @@ function periodLabel(cadence: OnboardingPreferences["cadence"]) {
 function readDevCardLimit(maxCards: number) {
   const saved = Number(localStorage.getItem(DEV_CARD_LIMIT_KEY));
   return Number.isInteger(saved) && saved >= 1 && saved <= maxCards ? saved : maxCards;
+}
+
+function lastExecutionKey(wallet: string) {
+  return `${LAST_EXECUTION_KEY}:${wallet.toLowerCase()}`;
+}
+
+function lastExecutionCandidatesKey(wallet: string) {
+  return `${LAST_EXECUTION_CANDIDATES_KEY}:${wallet.toLowerCase()}`;
+}
+
+function readReceiptCandidates(wallet: string) {
+  try {
+    const value = JSON.parse(localStorage.getItem(lastExecutionCandidatesKey(wallet)) ?? "[]");
+    return Array.isArray(value) ? value as Candidate[] : [];
+  } catch {
+    return [];
+  }
 }

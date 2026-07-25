@@ -11,6 +11,8 @@ const RISK_OPTIONS = ["conservative", "balanced", "degen"] as const;
 
 export function AccountScreen({
   wallet,
+  fundingWallet,
+  smartWalletReady,
   preferences,
   developerMode,
   devCardLimit,
@@ -20,6 +22,8 @@ export function AccountScreen({
   onSave
 }: {
   wallet: string;
+  fundingWallet: string;
+  smartWalletReady: boolean;
   preferences: OnboardingPreferences;
   developerMode: boolean;
   devCardLimit: number;
@@ -33,7 +37,7 @@ export function AccountScreen({
   const [balanceError, setBalanceError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [addressCopied, setAddressCopied] = useState(false);
+  const [addressCopied, setAddressCopied] = useState<"smart" | "funding">();
 
   useEffect(() => setDraft(preferences), [preferences]);
 
@@ -68,13 +72,13 @@ export function AccountScreen({
     }
   }
 
-  async function copyAddress() {
-    if (!wallet) return;
+  async function copyAddress(address: string, type: "smart" | "funding") {
+    if (!address) return;
     try {
-      await navigator.clipboard.writeText(wallet);
+      await navigator.clipboard.writeText(address);
     } catch {
       const textarea = document.createElement("textarea");
-      textarea.value = wallet;
+      textarea.value = address;
       textarea.style.position = "fixed";
       textarea.style.opacity = "0";
       document.body.append(textarea);
@@ -82,8 +86,8 @@ export function AccountScreen({
       document.execCommand("copy");
       textarea.remove();
     }
-    setAddressCopied(true);
-    window.setTimeout(() => setAddressCopied(false), 1_800);
+    setAddressCopied(type);
+    window.setTimeout(() => setAddressCopied(undefined), 1_800);
   }
 
   return (
@@ -94,26 +98,77 @@ export function AccountScreen({
         <p>Change the preferences that shape your next investment session. Nothing trades until you review and sign.</p>
       </header>
 
-      <section className="account-balance" aria-label="USDG balance">
+      <section className="account-balance" aria-label="Investmade Wallet USDG balance">
         <div>
-          <span className="account-label">USDG balance</span>
+          <span className="account-label">Investmade Wallet · USDG balance</span>
           <strong>{balance === undefined ? (balanceError ? "—" : "Loading…") : `${balance} USDG`}</strong>
-          <small>{balanceError || "Live Robinhood Chain balance via Alchemy"}</small>
+          <small>{balanceError || "This smart wallet funds and atomically executes every basket."}</small>
         </div>
         <div className="account-address">
-          <code>{wallet ? `${wallet.slice(0, 10)}…${wallet.slice(-8)}` : "Wallet not connected"}</code>
+          <code>{wallet ? shortAddress(wallet) : "Wallet not activated"}</code>
           {wallet ? (
             <button
               type="button"
               className="copy-address"
-              aria-label={addressCopied ? "Address copied" : "Copy wallet address"}
-              title={addressCopied ? "Copied" : "Copy address"}
-              onClick={() => void copyAddress()}
+              aria-label={addressCopied === "smart" ? "Address copied" : "Copy Investmade Wallet address"}
+              title={addressCopied === "smart" ? "Copied" : "Copy address"}
+              onClick={() => void copyAddress(wallet, "smart")}
             >
-              {addressCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              {addressCopied === "smart" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
             </button>
           ) : null}
         </div>
+      </section>
+
+      <section className="wallet-identity-grid" aria-label="Wallet roles">
+        <article>
+          <div className="wallet-role-heading">
+            <span className="account-label">Execution wallet</span>
+            <span className={smartWalletReady ? "wallet-ready" : "wallet-pending"}>
+              {smartWalletReady ? "Ready" : "Activation required"}
+            </span>
+          </div>
+          <h2>Investmade Wallet</h2>
+          <div className="wallet-role-address">
+            <code>{wallet ? shortAddress(wallet) : "Not available"}</code>
+            {wallet ? (
+              <button
+                type="button"
+                className="copy-address copy-address-compact"
+                aria-label={addressCopied === "smart" ? "Address copied" : "Copy Investmade Wallet address"}
+                title={addressCopied === "smart" ? "Copied" : "Copy address"}
+                onClick={() => void copyAddress(wallet, "smart")}
+              >
+                {addressCopied === "smart" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              </button>
+            ) : null}
+          </div>
+          <p>Receives USDG, holds assets, and sends the complete basket as one ERC-4337 operation.</p>
+        </article>
+        <article>
+          <div className="wallet-role-heading">
+            <span className="account-label">Connected signer</span>
+            <span className={fundingWallet ? "wallet-ready" : "wallet-pending"}>
+              {fundingWallet ? "Connected" : "Optional"}
+            </span>
+          </div>
+          <h2>Funding wallet</h2>
+          <div className="wallet-role-address">
+            <code>{fundingWallet ? shortAddress(fundingWallet) : "Use Privy login only"}</code>
+            {fundingWallet ? (
+              <button
+                type="button"
+                className="copy-address copy-address-compact"
+                aria-label={addressCopied === "funding" ? "Address copied" : "Copy funding wallet address"}
+                title={addressCopied === "funding" ? "Copied" : "Copy address"}
+                onClick={() => void copyAddress(fundingWallet, "funding")}
+              >
+                {addressCopied === "funding" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              </button>
+            ) : null}
+          </div>
+          <p>Your Rainbow or other external wallet can fund the Investmade Wallet. It does not execute basket legs directly.</p>
+        </article>
       </section>
 
       <section className="account-settings" aria-labelledby="settings-title">
@@ -284,4 +339,8 @@ function clampTicket(value: string) {
   if (!Number.isFinite(parsed)) return 0.1;
   const rounded = Math.round(parsed * 100) / 100;
   return isTicketSizeUsd(rounded) ? rounded : Math.max(0.1, Math.min(100, rounded));
+}
+
+function shortAddress(address: string) {
+  return `${address.slice(0, 10)}…${address.slice(-8)}`;
 }

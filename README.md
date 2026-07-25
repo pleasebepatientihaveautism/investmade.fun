@@ -4,15 +4,18 @@ investmade.fun is a non-custodial, fixed-budget allocation app for Robinhood Cha
 
 This repository implements the core MVP described in [investmade_fun.md](./investmade_fun.md). Autonomous mandates and AgentKit execution are intentionally excluded from the core path.
 
-Privy provides email, external-wallet, and embedded-wallet authentication. The browser sends a
-short-lived Privy access token with the active wallet address; the server verifies the token and
-confirms that address is linked to the authenticated Privy user before accepting live requests.
+Privy provides email, external-wallet, embedded-wallet, and ERC-4337 smart-wallet support. Every
+user gets an embedded signer and a canonical Investmade smart wallet. The browser sends a
+short-lived Privy access token with that smart-wallet address; the server verifies the token and
+confirms the smart wallet belongs to the authenticated Privy user before accepting live requests.
 `PRIVY_APP_SECRET` is server-only and must never be exposed through a Vite-prefixed variable.
 
 ## What is implemented
 
 - React/Vite product UI: onboarding, swipe feed, budget rail, review, explicit wallet confirmation, positions, and terminal receipts.
-- Privy access-token authentication with server-side linked-wallet verification.
+- Privy access-token authentication with server-side embedded/smart-wallet verification.
+- One atomic ERC-4337 basket operation: allowance reset/approval, Permit2 setup, and all Uniswap
+  swaps are simulated and confirmed together. A failed leg reverts the complete basket.
 - First-time, five-question onboarding for cadence, ticket size, risk mode, asset mix, and explicit product-risk acknowledgement; preferences determine session epochs, quote amounts, policy limits, the server-side candidate set, and private-ranking input.
 - World ID 4.0 RP signatures and backend verification; production feed generation requires a verified human.
 - Canonical Robinhood Chain registry sourced from Uniswap’s Robinhood Stocks list: WETH plus 15 tokenized stock assets; the ten-card feed uses WETH and the first nine listed stocks.
@@ -60,20 +63,27 @@ npm start
 
 Production startup fails when Privy, PostgreSQL, Uniswap, 0G, World RP, or session configuration is missing. Stock-token cards additionally require `STOCK_ELIGIBILITY_PROVIDER_URL`; without it, they remain hidden.
 
+In the Privy Dashboard, enable smart wallets for all users and configure Robinhood Chain (`4663`)
+as a custom chain with an Alchemy bundler and paymaster. This dashboard step is required before
+`useSmartWallets()` can create a chain-4663 client.
+
 The production RPC should be a dedicated provider endpoint. Robinhood’s public endpoint is suitable for development and kill tests, not normal production traffic.
 
 ## Execution boundary
 
-The app prepares a sequence of wallet calls:
+The app prepares one atomic smart-wallet operation containing:
 
 1. Optional approval cancellation.
 2. Optional exact required USDG approval.
 3. One fresh Uniswap quote and transaction-calldata request per selected route.
-4. Explicit wallet confirmation for each call.
-5. Submission of only the swap transaction hashes to the backend.
-6. Terminal receipt reconciliation.
+4. A Permit2 transaction when Uniswap requires one.
+5. One Privy confirmation for the complete call set.
+6. Submission of the single operation transaction hash to the backend.
+7. Terminal receipt reconciliation.
 
-The UI does not promise an atomic basket. It never treats a quote, API acknowledgement, or transaction hash as settlement.
+The live buy flow rejects sequential submission. It preflights the complete user operation before
+opening Privy, then executes all legs together or reverts them together. A quote, API
+acknowledgement, or transaction hash is still never treated as settlement.
 
 For successful buy legs, the receipt records the actual output-token amount transferred to the authenticated wallet. A successful transaction receipt with no matching output transfer is not labeled settled.
 
@@ -84,13 +94,13 @@ No server private key exists. The backend cannot broadcast for the user.
 ## Signing a live Robinhood Chain trade
 
 Live signing is intentionally unavailable while `INVESTMADE_DEMO_MODE=true`. After configuring the
-required production services, run with `INVESTMADE_DEMO_MODE=false`, connect the funded Privy wallet,
-and use **Review and sign → Refresh quotes & continue → Confirm in wallet**. Privy shows every
-approval and Uniswap swap for the user to approve or reject. investmade.fun forwards the current
-Uniswap gas settings, stores only the resulting swap hashes, and waits for Robinhood Chain receipts.
+required production services, run with `INVESTMADE_DEMO_MODE=false`, activate and fund the
+Investmade Wallet, and use **Review and sign → Confirm once**. Privy shows the complete atomic
+basket. investmade.fun stores its single resulting transaction hash and waits for Robinhood Chain
+settlement.
 
-The settlement screen links each live swap to Blockscout and marks it settled only after the receipt
-matches the authorized calldata and contains an output-token transfer to the connected wallet. It
+The settlement screen links the atomic operation to Blockscout and marks it settled only after the
+receipt contains the exact USDG spend and every minimum output transfer to the Investmade Wallet. It
 does not label a quote, signature request, or submitted hash as settlement.
 
 For a developer-controlled, single-asset mainnet smoke test without enabling the full production
@@ -99,9 +109,9 @@ real USDG→WETH Uniswap calldata and Privy authentication, but keeps the rankin
 memory and labels its ranking evidence as a demo. It is intentionally limited to WETH, cannot run
 with `NODE_ENV=production`, and is not a production deployment mode.
 
-The API's route quote is simulated before it is returned. The subsequent calldata request is not
-wallet-state simulated because an exact USDG approval may be one of the immediately preceding
-wallet confirmations; simulating it before that approval exists would reject a valid sequence.
+The Uniswap route is simulated when prepared, and Privy then prepares the complete ERC-4337 user
+operation before opening the signing modal. This second preflight includes preceding approval and
+Permit2 calls in their real execution order.
 
 ## Live integration evidence
 

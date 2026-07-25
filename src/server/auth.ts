@@ -18,11 +18,20 @@ export class PrivyWalletAuth {
     const user = await this.client.users()._get(claims.user_id);
     const linked = user.linked_accounts.some(
       (account) =>
-        isEthereumWallet(account) && account.address.toLowerCase() === requestedWallet
+        isInvestmadeWallet(account) && account.address.toLowerCase() === requestedWallet
     );
     if (!linked) throw new Error("WALLET_NOT_LINKED_TO_PRIVY_USER");
     return requestedWallet;
   }
+}
+
+export function isInvestmadeWallet(
+  account: LinkedAccount
+): account is Extract<
+  LinkedAccount,
+  { type: "wallet"; chain_type: "ethereum" } | { type: "smart_wallet" }
+> {
+  return account.type === "smart_wallet" || isEthereumWallet(account);
 }
 
 export function isEthereumWallet(

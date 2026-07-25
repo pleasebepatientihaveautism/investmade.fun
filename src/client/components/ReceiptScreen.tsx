@@ -3,21 +3,24 @@ import { formatUnits } from "viem";
 import type { ExecutionRecord, FeedResponse } from "../api";
 import { AssetMark } from "./AssetMark";
 import { Check, Shield } from "./Icons";
+import { LoaderCircle, RotateCcw } from "lucide-react";
 
 export function ReceiptScreen({
   record,
   selected,
   feed,
   demoMode,
+  onResume,
   onStartNextBasket
 }: {
   record?: ExecutionRecord;
   selected: Candidate[];
   feed?: FeedResponse;
   demoMode: boolean;
+  onResume: () => Promise<void>;
   onStartNextBasket: () => void;
 }) {
-  if (!record || !feed) {
+  if (!record) {
     return (
       <main className="empty-page">
         <h1>Receipts</h1>
@@ -30,17 +33,28 @@ export function ReceiptScreen({
   const receiptStatus = receiptCopy(record.status, selected.length, successfulLegs, demoMode);
   const outputsByAssetId = new Map(record.settledOutputs.map((output) => [output.assetId, output]));
   const transactionHash = record.transactionHashes.at(-1);
+  const isPending = record.status === "SUBMITTED";
   return (
     <main className="receipt-page">
       <div className="receipt-heading">
-        <span className="receipt-check"><Check /></span>
+        <span className={`receipt-check ${isPending ? "pending" : record.status === "FAILED" ? "failed" : ""}`}>
+          {isPending ? <LoaderCircle /> : record.status === "FAILED" ? <span aria-hidden="true">!</span> : <Check />}
+        </span>
         <div><h1>{receiptStatus.title}</h1><p>{receiptStatus.description}</p></div>
       </div>
       <section className="receipt-ledger">
-        <div className="receipt-header"><h2>Settlement receipt</h2><span>{record.plan.epochId}</span></div>
-        {selected.map((candidate, index) => {
+        <div className="receipt-header"><h2>Atomic basket receipt</h2><span>{record.plan.epochId}</span></div>
+        <div className="atomic-receipt-strip">
+          <b>One confirmation · one operation</b>
+          <span>{record.plan.quotes.length} swaps execute together or the complete basket reverts.</span>
+          {transactionHash ? (
+            demoMode ? <code>{shortHash(transactionHash)}</code> : (
+              <a href={explorerUrl(transactionHash)} target="_blank" rel="noreferrer">{shortHash(transactionHash)}</a>
+            )
+          ) : <code>Awaiting operation hash</code>}
+        </div>
+        {selected.map((candidate) => {
           const output = outputsByAssetId.get(candidate.assetId);
-          const hash = output?.transactionHash ?? record.transactionHashes[index];
           const isSuccess = output?.status === "success";
           return (
             <div className="receipt-row" key={candidate.assetId}>
@@ -59,21 +73,22 @@ export function ReceiptScreen({
                       ? "No output recorded"
                       : "Awaiting receipt"}
               </span>
-              {hash ? (
-                demoMode ? <code>{shortHash(hash)}</code> : (
-                  <a className="receipt-hash" href={explorerUrl(hash)} target="_blank" rel="noreferrer">
-                    {shortHash(hash)}
-                  </a>
-                )
-              ) : <code>Awaiting hash</code>}
             </div>
           );
         })}
+        {!selected.length ? (
+          <p className="receipt-missing-snapshot">The operation is preserved, but its local card snapshot is unavailable. Use the operation link for the canonical onchain details.</p>
+        ) : null}
         <div className="receipt-actions">
           {transactionHash && !demoMode ? (
             <a className="button button-primary" href={explorerUrl(transactionHash)} target="_blank" rel="noreferrer">
               View transaction on Robinhood Chain
             </a>
+          ) : null}
+          {isPending ? (
+            <button type="button" className="button button-outline" onClick={() => void onResume()}>
+              <RotateCcw aria-hidden="true" /> Check settlement
+            </button>
           ) : null}
           <button type="button" className="button button-outline" onClick={onStartNextBasket}>
             Build another basket
@@ -84,12 +99,12 @@ export function ReceiptScreen({
         <h2>Proof chain</h2>
         <p><Shield /><span>Authorized plan<b>{shortHash(record.plan.authorizedPlanHash)}</b></span></p>
         <p><Shield /><span>Policy hash<b>{shortHash(record.plan.policyHash)}</b></span></p>
-        <p><Shield /><span>0G output<b>{shortHash(feed.proof.outputCommitment)}</b></span></p>
+        <p><Shield /><span>0G output<b>{feed ? shortHash(feed.proof.outputCommitment) : "Feed snapshot unavailable"}</b></span></p>
         <p><Shield /><span>{isTerminal ? "Terminal outcome" : "Onchain status"}<b>{record.status}</b></span></p>
         <div className={demoMode ? "demo-disclosure" : "live-disclosure"}>
           {demoMode
             ? "This receipt is local demo evidence. It is not mainnet settlement proof."
-            : "Live settlement is verified from Robinhood Chain transaction receipts and output-token transfers to your connected wallet."}
+            : "Live settlement is verified from the atomic Robinhood Chain operation and output-token transfers to your Investmade Wallet."}
         </div>
       </aside>
     </main>
@@ -98,7 +113,7 @@ export function ReceiptScreen({
 
 function receiptCopy(status: ExecutionRecord["status"], totalLegs: number, successfulLegs: number, demoMode: boolean) {
   if (status === "SUBMITTED") {
-    return { title: "Transaction submitted", description: "Your wallet broadcast the Uniswap calls. Waiting for Robinhood Chain receipts." };
+    return { title: "Basket submitted", description: "Your Investmade Wallet broadcast one atomic operation. Waiting for Robinhood Chain settlement." };
   }
   if (status === "SETTLED") {
     return { title: "Basket settled", description: `All ${totalLegs} legs reached a verified terminal state${demoMode ? " in local demo mode" : " on Robinhood Chain"}.` };

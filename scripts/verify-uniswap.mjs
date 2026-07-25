@@ -44,8 +44,7 @@ const response = await fetch("https://trade-api.gateway.uniswap.org/v1/quote", {
   headers: {
     "Content-Type": "application/json",
     "x-api-key": apiKey,
-    "x-universal-router-version": "2.1.1",
-    "x-permit2-disabled": "true"
+    "x-universal-router-version": "2.1.1"
   },
   body: JSON.stringify({
     type: "EXACT_INPUT",
@@ -56,7 +55,10 @@ const response = await fetch("https://trade-api.gateway.uniswap.org/v1/quote", {
     tokenOut,
     swapper: wallet,
     slippageTolerance: 0.5,
-    routingPreference: "BEST_PRICE"
+    routingPreference: "BEST_PRICE",
+    protocols: ["V2", "V3", "V4"],
+    generatePermitAsTransaction: true,
+    permitAmount: "FULL"
   }),
   signal: AbortSignal.timeout(15_000)
 });
@@ -76,8 +78,7 @@ if (response.ok) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "x-permit2-disabled": "true"
+      "x-api-key": apiKey
     },
     body: JSON.stringify({
       walletAddress: wallet,
@@ -92,13 +93,11 @@ if (response.ok) {
     headers: {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
-      "x-universal-router-version": "2.1.1",
-      "x-permit2-disabled": "true"
+      "x-universal-router-version": "2.1.1"
     },
     body: JSON.stringify({
       quote: body.quote,
-      refreshGasPrice: false,
-      simulateTransaction: false,
+      ...(body.permitData ? { permitData: body.permitData } : {}),
       safetyMode: "SAFE",
       deadline: Math.floor(Date.now() / 1000) + 60
     }),
@@ -132,6 +131,7 @@ console.log(
     quoteInputTokenPresent: typeof quote.input?.token === "string",
     quoteOutputTokenPresent: typeof quote.output?.token === "string",
     permitDataPresent: Boolean(body.permitData),
+    permitTransactionPresent: Boolean(body.permitTransaction),
     approvalCheckPassed: approvalResponse?.ok ?? false,
     swapSimulationPassed: swapResponse?.ok ?? false,
     swapCalldataValid,
@@ -139,6 +139,9 @@ console.log(
     swapErrorCode: swapResponse?.ok
       ? null
       : swapBody?.errorCode ?? swapBody?.error ?? swapBody?.code ?? "UNKNOWN",
+    swapErrorMessage: swapResponse?.ok
+      ? null
+      : swapBody?.detail ?? swapBody?.message ?? null,
     errorCode: response.ok ? null : body.errorCode ?? body.error ?? body.code ?? "UNKNOWN"
   })
 );

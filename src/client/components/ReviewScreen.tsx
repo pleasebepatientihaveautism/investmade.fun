@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useWallets, type EIP1193Provider } from "@privy-io/react-auth";
-import { formatUnits } from "viem";
+import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
+import { formatUnits, type Address, type Hex } from "viem";
 import type { Candidate } from "../../domain/schemas";
 import { formatTicketSizeUsd } from "../../domain/schemas";
 import type { ExecutionRecord, FeedResponse, WalletCall, WeeklySession } from "../api";
@@ -15,8 +15,11 @@ export function ReviewScreen({
   onRemove,
   onBack,
   onSettled,
+  onExecutionChange,
   onSessionExpired,
-  ticketSizeUsd
+  ticketSizeUsd,
+  wallet,
+  smartWalletReady
 }: {
   session: WeeklySession;
   feed: FeedResponse;
@@ -24,13 +27,16 @@ export function ReviewScreen({
   onRemove: (assetId: string) => void;
   onBack: () => void;
   onSettled: (record: ExecutionRecord) => void;
+  onExecutionChange: (record: ExecutionRecord) => void;
   onSessionExpired: () => Promise<{ sessionId: string; assetIds: string[] }>;
   ticketSizeUsd: number;
+  wallet: string;
+  smartWalletReady: boolean;
 }) {
-  const { wallets } = useWallets();
-  const activeWallet = wallets.find((candidate) => candidate.linked);
+  const { client: smartWalletClient, getClientForChain } = useSmartWallets();
   const [record, setRecord] = useState<ExecutionRecord>();
   const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "refreshing" | "simulating" | "signing" | "settling">("idle");
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const total = Math.round(selected.length * ticketSizeUsd * 100) / 100;
@@ -54,6 +60,7 @@ export function ReviewScreen({
 
   async function prepare() {
     setLoading(true);
+    setPhase("refreshing");
     setError("");
     try {
       const prepared = await api.prepareExecution(
@@ -62,6 +69,7 @@ export function ReviewScreen({
         ticketSizeUsd
       );
       setRecord(prepared);
+      onExecutionChange(prepared);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Could not prepare execution";
       if (message === "SESSION_NOT_FOUND") {
@@ -69,6 +77,7 @@ export function ReviewScreen({
           const recovered = await onSessionExpired();
           const prepared = await api.prepareExecution(recovered.sessionId, recovered.assetIds, ticketSizeUsd);
           setRecord(prepared);
+          onExecutionChange(prepared);
           setError("");
         } catch (recoveryError) {
           setError(recoveryError instanceof Error ? recoveryError.message : "Could not renew local session");
@@ -78,6 +87,7 @@ export function ReviewScreen({
       }
     } finally {
       setLoading(false);
+      setPhase("idle");
     }
   }
 
@@ -87,6 +97,7 @@ export function ReviewScreen({
     try {
       const settled = await api.demoSettle(record.plan.executionId);
       setRecord(settled);
+      onExecutionChange(settled);
       onSettled(settled);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Settlement failed");
@@ -96,48 +107,54 @@ export function ReviewScreen({
   }
 
   async function confirmLive() {
-    if (!record?.walletCalls?.length || !activeWallet) {
-      setError("No connected wallet or executable calls are available.");
+    if (!record?.walletCalls?.length || !wallet) {
+      setError("No Investmade Wallet or executable calls are available.");
       return;
     }
-    if (!isDelegatedPrivyWallet(activeWallet)) {
+    if (!smartWalletReady) {
       setError(
-        "One-signature baskets require a delegated Privy smart wallet. This connected wallet queues individual transactions, so Investmade will not submit a partial basket."
+        "Activate your Investmade smart wallet before signing. External wallets can fund it, but cannot execute an atomic basket."
       );
       return;
     }
     setLoading(true);
     setError("");
     try {
-      await activeWallet.switchChain(4663);
-      const provider = await activeWallet.getEthereumProvider();
-      const batchHash = await submitBatch(provider, activeWallet.address, record.walletCalls);
-      if (batchHash) {
-        const submitted = await api.markSubmitted(record.plan.executionId, [batchHash], true);
-        setRecord(submitted);
-        const reconciled = await reconcileUntilTerminal(record.plan.executionId);
-        setRecord(reconciled);
-        onSettled(reconciled);
-        return;
+      const client =
+        smartWalletClient ?? (await getClientForChain({ id: 4663 }));
+      if (!client || client.account.address.toLowerCase() !== wallet.toLowerCase()) {
+        throw new Error("SMART_WALLET_ADDRESS_MISMATCH");
       }
-      const swapHashes: string[] = [];
-      for (const call of record.walletCalls) {
-        const transactionHash = (await provider.request({
-          method: "eth_sendTransaction",
-          params: [walletTransaction(call)]
-        })) as string;
-        if (call.kind !== "SWAP") await waitForReceipt(provider, transactionHash);
-        else swapHashes.push(transactionHash);
-      }
-      const submitted = await api.markSubmitted(record.plan.executionId, swapHashes);
+      const calls = record.walletCalls.map(smartWalletCall);
+      setPhase("simulating");
+      await client.prepareUserOperation({ calls });
+      setPhase("signing");
+      const transactionHash = await client.sendTransaction(
+        { calls },
+        {
+          uiOptions: {
+            description: `Invest ${formatTicketSizeUsd(total)} USDG into ${selected.length} assets. All purchases succeed or none.`,
+            buttonText: "Sign and invest"
+          }
+        }
+      );
+      const submitted = await api.markSubmitted(
+        record.plan.executionId,
+        [transactionHash],
+        true
+      );
       setRecord(submitted);
+      onExecutionChange(submitted);
+      setPhase("settling");
       const reconciled = await reconcileUntilTerminal(record.plan.executionId);
       setRecord(reconciled);
+      onExecutionChange(reconciled);
       onSettled(reconciled);
     } catch (caught) {
       setError(executionErrorMessage(caught));
     } finally {
       setLoading(false);
+      setPhase("idle");
     }
   }
 
@@ -148,6 +165,7 @@ export function ReviewScreen({
     try {
       const reconciled = await reconcileUntilTerminal(record.plan.executionId);
       setRecord(reconciled);
+      onExecutionChange(reconciled);
       onSettled(reconciled);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not verify settlement yet.");
@@ -194,6 +212,11 @@ export function ReviewScreen({
           { label: "Assets eligible", value: `${selected.length} / ${selected.length}`, ok: true },
           { label: "Robinhood Chain · 4663", value: "Connected", ok: true },
           {
+            label: "Atomic Investmade Wallet",
+            value: smartWalletReady ? "Ready" : "Activation required",
+            ok: smartWalletReady
+          },
+          {
             label: quotesFresh ? "Quotes fresh" : "Preview expired",
             value: quotesFresh ? `${Math.ceil(quoteExpiry / 1000)}s` : "Refresh required",
             ok: quotesFresh
@@ -207,7 +230,7 @@ export function ReviewScreen({
           <p><span>Input commitment</span><b>{shortHash(feed.proof.inputCommitment)}</b></p>
           <p><span>TEE verified</span><b>{feed.proof.teeVerified ? "Verified" : "Not available in demo"}</b></p>
         </div>
-        <div className="wallet-boundary"><Shield /><p>One confirmation is available only with a delegated Privy smart wallet that supports atomic batching.<br />A transaction hash is not settlement proof.</p></div>
+        <div className="wallet-boundary"><Shield /><p><b>One approval · all-or-nothing.</b><br />The complete call set is simulated before Privy opens the signing prompt.</p></div>
         {error && <p className="error-message" role="alert">{error}</p>}
         <div className="review-actions">
           <button type="button" className="button button-outline" onClick={onBack}>Back to cards</button>
@@ -222,6 +245,8 @@ export function ReviewScreen({
               onClick={
                 record.status === "SUBMITTED"
                   ? resumeReconciliation
+                  : !quotesFresh
+                    ? prepare
                   : record.walletCalls?.length
                     ? confirmLive
                     : settleDemo
@@ -231,11 +256,13 @@ export function ReviewScreen({
               {record.status === "SETTLED"
                 ? "Settled"
                 : loading
-                  ? "Confirming…"
+                  ? phaseLabel(phase)
                   : record.status === "SUBMITTED"
                     ? "Check settlement receipt"
+                    : !quotesFresh
+                      ? "Refresh quotes & continue"
                     : record.walletCalls?.length
-                    ? "Confirm in wallet"
+                    ? "Review and sign"
                     : "Simulate wallet confirmation"} <ArrowRight />
             </button>
           )}
@@ -253,119 +280,21 @@ export function ReviewScreen({
   );
 }
 
-async function submitBatch(
-  provider: EIP1193Provider,
-  wallet: string,
-  calls: WalletCall[]
-): Promise<string | undefined> {
-  if (calls.length < 2) return;
-  try {
-    const capabilities = await provider.request({
-      method: "wallet_getCapabilities",
-      params: [wallet]
-    });
-    if (!supportsAtomicBatch(capabilities)) {
-      throw new Error("ATOMIC_BATCH_NOT_SUPPORTED");
-    }
-    const result = await provider.request({
-      method: "wallet_sendCalls",
-      params: [
-        {
-          version: "1.0",
-          chainId: "0x1237",
-          from: wallet,
-          calls: calls.map((call) => walletBatchCall(call))
-        }
-      ]
-    });
-    const id = batchId(result);
-    if (!id) throw new Error("BATCH_ID_MISSING");
-    return await waitForBatchHash(provider, id);
-  } catch (caught) {
-    if (isUnsupportedBatchError(caught)) return;
-    throw caught;
-  }
-}
-
-/**
- * EIP-5792 reports capabilities per chain.  We accept only an explicit atomic-batch
- * declaration: one approval plus several swaps must never be presented as one
- * confirmation if a wallet will actually submit independent transactions.
- */
-function supportsAtomicBatch(value: unknown) {
-  if (!value || typeof value !== "object") return false;
-  const capabilities = value as Record<string, unknown>;
-  const chain = capabilities["0x1237"] ?? capabilities["eip155:4663"];
-  if (!chain || typeof chain !== "object") return false;
-  const atomicBatch = (chain as Record<string, unknown>).atomicBatch;
-  return (
-    atomicBatch === true ||
-    (typeof atomicBatch === "object" &&
-      atomicBatch !== null &&
-      (atomicBatch as { supported?: unknown }).supported === true)
-  );
-}
-
-function isDelegatedPrivyWallet(wallet: { walletClientType?: string; delegated?: boolean }) {
-  return (wallet.walletClientType === "privy" || wallet.walletClientType === "privy-v2") &&
-    wallet.delegated === true;
-}
-
-function walletBatchCall(call: WalletCall) {
+function smartWalletCall(call: WalletCall): { to: Address; data: Hex; value: bigint } {
   const { transaction } = call;
   return {
-    to: transaction.to,
-    data: transaction.data,
-    value: toHex(transaction.value)
+    to: transaction.to as Address,
+    data: transaction.data as Hex,
+    value: BigInt(transaction.value)
   };
 }
 
-function batchId(result: unknown): string | undefined {
-  if (typeof result === "string") return result;
-  if (!result || typeof result !== "object") return;
-  const value = result as { id?: unknown; transactionId?: unknown; transaction_id?: unknown };
-  return [value.id, value.transactionId, value.transaction_id].find(
-    (item): item is string => typeof item === "string"
-  );
-}
-
-async function waitForBatchHash(provider: EIP1193Provider, id: string): Promise<string> {
-  if (/^0x[a-fA-F0-9]{64}$/.test(id)) return id;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const status = (await provider.request({
-      method: "wallet_getCallsStatus",
-      params: [id]
-    })) as {
-      status?: string;
-      receipts?: Array<{ transactionHash?: string }>;
-    };
-    if (status.status === "CONFIRMED") {
-      const hashes = new Set(
-        (status.receipts ?? [])
-          .map((receipt) => receipt.transactionHash)
-          .filter((hash): hash is string => /^0x[a-fA-F0-9]{64}$/.test(hash ?? ""))
-      );
-      if (hashes.size === 1) return [...hashes][0] as string;
-      throw new Error("BATCH_TRANSACTION_HASH_MISSING");
-    }
-    if (status.status === "FAILED") throw new Error("BATCH_TRANSACTION_FAILED");
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  throw new Error("BATCH_CONFIRMATION_PENDING");
-}
-
-function isUnsupportedBatchError(caught: unknown) {
-  const error = caught as { code?: unknown; message?: unknown };
-  return (
-    error?.code === 4200 ||
-    error?.code === -32601 ||
-    (typeof error?.message === "string" && /unsupported|not supported|method not found/i.test(error.message))
-  );
-}
-
 function executionErrorMessage(caught: unknown) {
-  if (caught instanceof Error && caught.message === "ATOMIC_BATCH_NOT_SUPPORTED") {
-    return "This wallet cannot atomically batch approval and swaps on Robinhood Chain. Connect a Privy smart wallet with atomic batching enabled before signing this basket.";
+  if (
+    caught instanceof Error &&
+    /smart wallet|bundler|paymaster|user operation|insufficient funds/i.test(caught.message)
+  ) {
+    return "The atomic basket could not pass smart-wallet preflight. Check Investmade Wallet funding and the Robinhood Chain bundler configuration, then retry.";
   }
   return caught instanceof Error ? caught.message : "Wallet execution failed.";
 }
@@ -379,44 +308,6 @@ function shortHash(hash: string) {
   return hash.length > 18 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash;
 }
 
-function toHex(value: string) {
-  return `0x${BigInt(value).toString(16)}`;
-}
-
-/**
- * A quote's gas limit is only a snapshot.  Robinhood Chain can need more gas at signing time,
- * so allow the connected wallet to estimate its own limit instead of forwarding a stale cap.
- */
-function walletTransaction(call: WalletCall) {
-  const { transaction } = call;
-  const hasEip1559Fees = Boolean(transaction.maxFeePerGas && transaction.maxPriorityFeePerGas);
-  return {
-    from: transaction.from,
-    to: transaction.to,
-    data: transaction.data,
-    value: toHex(transaction.value),
-    ...(hasEip1559Fees && transaction.maxFeePerGas
-      ? { maxFeePerGas: toHex(transaction.maxFeePerGas) }
-      : {}),
-    ...(hasEip1559Fees && transaction.maxPriorityFeePerGas
-      ? { maxPriorityFeePerGas: toHex(transaction.maxPriorityFeePerGas) }
-      : {}),
-    ...(!hasEip1559Fees && transaction.gasPrice ? { gasPrice: toHex(transaction.gasPrice) } : {})
-  };
-}
-
-async function waitForReceipt(provider: EIP1193Provider, hash: string) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const receipt = await provider.request({
-      method: "eth_getTransactionReceipt",
-      params: [hash]
-    });
-    if (receipt) return receipt;
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-  }
-  throw new Error("Approval is still pending. Retry after it confirms.");
-}
-
 async function reconcileUntilTerminal(executionId: string): Promise<ExecutionRecord> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const record = await api.reconcile(executionId);
@@ -424,4 +315,12 @@ async function reconcileUntilTerminal(executionId: string): Promise<ExecutionRec
     await new Promise((resolve) => setTimeout(resolve, 1_500));
   }
   throw new Error("Transactions are submitted but not terminal yet. Check Receipts shortly.");
+}
+
+function phaseLabel(phase: "idle" | "refreshing" | "simulating" | "signing" | "settling") {
+  if (phase === "refreshing") return "Refreshing quotes…";
+  if (phase === "simulating") return "Simulating full basket…";
+  if (phase === "signing") return "Waiting for signature…";
+  if (phase === "settling") return "Verifying settlement…";
+  return "Working…";
 }

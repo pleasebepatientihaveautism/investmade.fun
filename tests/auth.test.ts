@@ -1,6 +1,6 @@
 import type { LinkedAccount } from "@privy-io/node";
 import { describe, expect, it } from "vitest";
-import { isEthereumWallet } from "../src/server/auth.js";
+import { isEthereumWallet, isInvestmadeWallet } from "../src/server/auth.js";
 
 describe("Privy linked wallet boundary", () => {
   it("accepts an Ethereum wallet account", () => {
@@ -8,6 +8,15 @@ describe("Privy linked wallet boundary", () => {
       isEthereumWallet({
         type: "wallet",
         chain_type: "ethereum",
+        address: "0x71f30000000000000000000000000000000009a2"
+      } as LinkedAccount)
+    ).toBe(true);
+  });
+
+  it("accepts the Privy smart wallet used as the canonical execution account", () => {
+    expect(
+      isInvestmadeWallet({
+        type: "smart_wallet",
         address: "0x71f30000000000000000000000000000000009a2"
       } as LinkedAccount)
     ).toBe(true);
