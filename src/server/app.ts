@@ -93,6 +93,7 @@ export function createApp(deps: AppDependencies) {
 						"data:",
 						"blob:",
 						"https://*.world.org",
+						"https://assets.coingecko.com",
 						"https://coin-images.coingecko.com",
 						"https://img.logo.dev",
 						"https://cdn.tickerlogos.com",

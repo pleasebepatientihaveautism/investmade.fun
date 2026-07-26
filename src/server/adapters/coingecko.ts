@@ -17,14 +17,13 @@ export class CoinGeckoIconProvider implements AssetIconProvider {
   ) {}
 
   async getIcons(): Promise<Record<string, string>> {
-    if (!this.apiKey) return { ...FORGE_STOCK_ICONS };
     if (Date.now() < this.expiresAt) return this.cached;
 
     const ids = [...new Set(Object.values(COINGECKO_COIN_IDS))];
     const response = await this.fetcher(
-      `${COINGECKO_MARKETS_URL}?vs_currency=usd&ids=${encodeURIComponent(ids.join(","))}`,
+      `${COINGECKO_MARKETS_URL}?vs_currency=usd&ids=${encodeURIComponent(ids.join(","))}&per_page=250&page=1`,
       {
-        headers: { "x-cg-demo-api-key": this.apiKey },
+        headers: this.apiKey ? { "x-cg-demo-api-key": this.apiKey } : undefined,
         signal: AbortSignal.timeout(10_000)
       }
     );
