@@ -12,7 +12,7 @@ import {
 	type WeeklySession,
 } from "./api";
 import { AppShell } from "./components/AppShell";
-import { ArrowRight, Shield } from "./components/Icons";
+import { ArrowRight } from "./components/Icons";
 import { SwipeCard } from "./components/SwipeCard";
 import { BudgetRail } from "./components/BudgetRail";
 import { ReviewScreen } from "./components/ReviewScreen";
@@ -78,6 +78,7 @@ export function App({ config }: { config: PublicConfig }) {
 	const [error, setError] = useState("");
 	const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
 	const [loadingMore, setLoadingMore] = useState(false);
+	const [topUpRequest, setTopUpRequest] = useState(0);
 	const decisionTimer = useRef<number | undefined>(undefined);
 	const wallet = smartWalletAddress?.toLowerCase() ?? "";
 	const fundingWalletAddress = fundingWallet?.address.toLowerCase() ?? "";
@@ -175,8 +176,9 @@ export function App({ config }: { config: PublicConfig }) {
 		selectedIds.includes(candidate.assetId),
 	);
 	const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
+	const periodLimitUsd = preferences?.periodLimitUsd ?? 100;
 	const cadence = preferences?.cadence ?? "weekly";
-	const maxSelections = Math.floor(100 / ticketSizeUsd);
+	const maxSelections = Math.floor(periodLimitUsd / ticketSizeUsd);
 
 	const recoverReviewSession = useCallback(async () => {
 		if (!preferences) throw new Error("PREFERENCES_REQUIRED");
@@ -301,6 +303,8 @@ export function App({ config }: { config: PublicConfig }) {
 				onWallet={login}
 				walletReady={privyReady}
 				navigationEnabled={authenticated && stage !== "onboarding"}
+				fundingWallet={fundingWallet}
+				topUpRequest={topUpRequest}
 			>
 				{stage === "onboarding" ? (
 					<Onboarding
@@ -341,6 +345,7 @@ export function App({ config }: { config: PublicConfig }) {
 						smartWalletReady={smartWalletReady}
 						preferences={preferences}
 						developerMode={config.executionMode === "local-live"}
+						onTopUp={() => setTopUpRequest((request) => request + 1)}
 						onResetDemoWeek={async () => {
 							await loadSession(preferences);
 							setView("week");
@@ -384,6 +389,7 @@ export function App({ config }: { config: PublicConfig }) {
 							if (preferences) void loadSession(preferences);
 						}}
 						ticketSizeUsd={ticketSizeUsd}
+						periodLimitUsd={periodLimitUsd}
 						wallet={wallet}
 						smartWalletReady={smartWalletReady}
 						onExecutionChange={(record) => {
@@ -412,7 +418,7 @@ export function App({ config }: { config: PublicConfig }) {
 					<main className="swipe-page">
 						<section className="swipe-workspace">
 							<header className="page-heading">
-								<h1>Build today’s basket</h1>
+								<h1>Build your next basket</h1>
 								<p>
 									Swipe right to allocate {ticketSizeUsd} USDG. Nothing moves
 									until you review and confirm.
@@ -422,15 +428,6 @@ export function App({ config }: { config: PublicConfig }) {
 										<b>Live signing enabled.</b> Real USDG → WETH Uniswap quote;
 										ranking evidence is local-only.
 									</p>
-								) : null}
-								{preferences ? (
-									<button
-										type="button"
-										className="button button-outline new-basket-button"
-										onClick={() => void loadSession(preferences)}
-									>
-										New basket
-									</button>
 								) : null}
 							</header>
 							{error ? (
@@ -445,7 +442,13 @@ export function App({ config }: { config: PublicConfig }) {
 								<div className="loading-state">
 									<span />
 									<h2>Building your personal feed</h2>
-									<p>Checking executable routes and deterministic policy.</p>
+									<p>
+										{config.executionMode === "live"
+											? "Eligible assets. Privately ranked. TEE-verified."
+											: config.executionMode === "local-live"
+												? "Live Uniswap route. Local ranking evidence."
+												: "Demo assets. Bounded ranking. No broadcast."}
+									</p>
 								</div>
 							) : current ? (
 								<>
@@ -535,7 +538,7 @@ export function App({ config }: { config: PublicConfig }) {
 											}}
 										/>
 									) : null}
-									<h2>Your feed is complete.</h2>
+									<h2>That’s the feed.</h2>
 									<p>
 										{selected.length
 											? `${formatTicketSizeUsd(selected.length * ticketSizeUsd)} USDG is ready for review.`
@@ -560,23 +563,71 @@ export function App({ config }: { config: PublicConfig }) {
 							onRemove={remove}
 							executionMode={config.executionMode}
 							ticketSizeUsd={ticketSizeUsd}
+							periodLimitUsd={periodLimitUsd}
 							cadence={cadence}
 						/>
-						<section className="trust-strip">
-							<Shield />
-							<b>Non-custodial by design</b>
-							<span>You control your keys</span>
-							<span>We never hold funds</span>
-							<span>Every trade requires your signature</span>
-						</section>
 						<section className="evidence-detail">
-							<div>
-								<h2>Why am I seeing this?</h2>
-								<p>Private AI ranking over bounded, executable candidates.</p>
+							<div className="feed-method-copy">
+								<h2>How your feed gets personal</h2>
+								<p>
+									{config.executionMode === "demo"
+										? "Your rules shape the feed. Demo mode applies them to eligible fixture routes."
+										: "Your rules narrow the market. We rank only assets you can actually buy now."}
+								</p>
+								<ol className="feed-pipeline">
+									<li>
+										<strong>1 · Your guardrails</strong>
+										<span>Cadence, cap, ticket, risk, and asset mix set the search space.</span>
+									</li>
+									<li>
+										<strong>2 · Route check</strong>
+										<span>
+											{config.executionMode === "demo"
+												? "Fixture routes pass the same eligibility and policy gates."
+												: "Robinhood Chain checks and an exact-size Uniswap quote remove anything stale or untradeable."}
+										</span>
+									</li>
+									<li>
+										<strong>3 · Private rank</strong>
+										<span>
+											{feed?.proof.teeVerified
+												? "0G ranks the survivors in a verified TEE. The Graph adds Uniswap v4 price history."
+												: "Local ranking uses the production schema. The Graph adds price history; proof marks ranking unverified."}
+										</span>
+									</li>
+								</ol>
 							</div>
-							<button type="button">
-								View full evidence <ArrowRight />
-							</button>
+							{feed ? (
+								<details className="feed-proof">
+									<summary>
+										View proof <ArrowRight />
+									</summary>
+									<dl>
+										<div>
+											<dt>Privacy</dt>
+											<dd>
+												{feed.proof.teeVerified
+													? "TEE verified"
+													: "Local run · not TEE verified"}
+											</dd>
+										</div>
+										<div>
+											<dt>Model</dt>
+											<dd>{feed.proof.model}</dd>
+										</div>
+										<div>
+											<dt>Input</dt>
+											<dd>{shortProof(feed.proof.inputCommitment)}</dd>
+										</div>
+										<div>
+											<dt>Output</dt>
+											<dd>{shortProof(feed.proof.outputCommitment)}</dd>
+										</div>
+									</dl>
+								</details>
+							) : (
+								<span className="feed-proof-loading">Preparing proof…</span>
+							)}
 						</section>
 					</main>
 				)}
@@ -587,6 +638,10 @@ export function App({ config }: { config: PublicConfig }) {
 
 function scrollToTop() {
 	window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function shortProof(value: string) {
+	return `${value.slice(0, 11)}…${value.slice(-6)}`;
 }
 
 function lastExecutionKey(wallet: string) {

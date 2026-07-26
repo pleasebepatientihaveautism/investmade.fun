@@ -17,7 +17,7 @@ confirms the smart wallet belongs to the authenticated Privy user before accepti
 - One atomic ERC-4337 basket operation: allowance reset/approval, Permit2 setup, and all Uniswap
   swaps are simulated and confirmed together. A failed leg reverts the complete basket.
 - First-time, five-question onboarding for cadence, ticket size, risk mode, asset mix, and explicit product-risk acknowledgement; preferences determine session epochs, quote amounts, policy limits, the server-side candidate set, and private-ranking input.
-- World ID 4.0 RP signatures and backend verification; production feed generation requires a verified human.
+- Privy wallet authentication is the default production identity boundary. World ID is optional and is only enabled when its three World environment variables are configured.
 - Canonical Robinhood Chain registry sourced from Uniswap’s Robinhood Stocks list: WETH plus 15 tokenized stock assets; the ten-card feed uses WETH and the first nine listed stocks.
 - Each live card displays a USD unit price derived from its fresh server-side Uniswap exact-input quote.
 - Live Robinhood asset/price/contract/oracle-pause checks.
@@ -61,7 +61,7 @@ npm run build
 npm start
 ```
 
-Production startup fails when Privy, PostgreSQL, Uniswap, 0G, World RP, or session configuration is missing. Stock-token cards additionally require `STOCK_ELIGIBILITY_PROVIDER_URL`; without it, they remain hidden.
+Production startup fails when Privy, PostgreSQL, Uniswap, 0G, or session configuration is missing. Stock-token cards additionally require `STOCK_ELIGIBILITY_PROVIDER_URL`; without it, they remain hidden.
 
 In the Privy Dashboard, enable smart wallets for all users and configure Robinhood Chain (`4663`)
 as a custom chain with an Alchemy bundler and paymaster. This dashboard step is required before

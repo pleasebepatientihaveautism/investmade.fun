@@ -78,6 +78,12 @@ export interface AssetIconsResponse {
   icons: Record<string, string>;
 }
 
+export interface AssetHistoryResponse {
+  period: "1M";
+  source: "the-graph" | "demo" | "unavailable";
+  points: Array<{ timestamp: number; price: number }>;
+}
+
 export interface TokenBalanceResponse {
   asset: "USDG";
   chainId: 4663;
@@ -150,6 +156,8 @@ function apiErrorMessage(code: string) {
 export const api = {
   config: () => request<PublicConfig>("/api/config"),
   assetIcons: () => request<AssetIconsResponse>("/api/assets/icons"),
+  assetHistory: (assetId: string) =>
+    request<AssetHistoryResponse>(`/api/assets/${encodeURIComponent(assetId)}/history`),
   usdgBalance: (wallet: string) => request<TokenBalanceResponse>(`/api/balances/${encodeURIComponent(wallet)}/usdg`),
   worldSignature: () =>
     request<{

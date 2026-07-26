@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePrivy, useWallets, type ConnectedWallet } from "@privy-io/react-auth";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { UserPill } from "@privy-io/react-auth/ui";
 import { Dialog, Popover, Select } from "radix-ui";
@@ -22,6 +22,7 @@ import {
   http,
   isAddress,
   parseUnits,
+  toHex,
   zeroAddress,
   type Address,
   type Hex
@@ -45,6 +46,7 @@ type SendToken = {
 };
 
 type SendStatus = "idle" | "preparing" | "signing" | "success";
+type TransferMode = "send" | "topUp";
 
 const DEFAULT_SEND_TOKEN: SendToken = {
   id: "USDG",
@@ -60,12 +62,22 @@ const robinhoodClient = createPublicClient({
 
 const SEND_TOKENS = buildSendTokens();
 
-export function WalletMenu({ wallet }: { wallet: string }) {
+export function WalletMenu({
+  wallet,
+  fundingWallet,
+  topUpRequest = 0
+}: {
+  wallet: string;
+  fundingWallet?: ConnectedWallet;
+  topUpRequest?: number;
+}) {
   const { logout } = usePrivy();
+  const { wallets } = useWallets();
   const { client: smartWalletClient, getClientForChain } = useSmartWallets();
   const privyAccountTriggerRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [transferMode, setTransferMode] = useState<TransferMode>("send");
   const [copied, setCopied] = useState(false);
   const [tokenId, setTokenId] = useState("USDG");
   const [recipient, setRecipient] = useState("");
@@ -89,14 +101,24 @@ export function WalletMenu({ wallet }: { wallet: string }) {
     balance !== undefined &&
     amountBaseUnits <= balance;
   const busy = status === "preparing" || status === "signing";
+  const activeFundingWallet =
+    fundingWallet ??
+    wallets.find(
+      (candidate) =>
+        candidate.linked &&
+        candidate.walletClientType !== "privy" &&
+        candidate.walletClientType !== "privy-v2"
+    );
+  const sourceAddress =
+    transferMode === "topUp" ? activeFundingWallet?.address ?? "" : wallet;
 
   useEffect(() => {
-    if (!sendOpen || !wallet || !selectedToken) return;
+    if (!sendOpen || !sourceAddress || !selectedToken) return;
     let cancelled = false;
     setBalance(undefined);
     setBalanceError("");
 
-    readTokenBalance(wallet as Address, selectedToken)
+    readTokenBalance(sourceAddress as Address, selectedToken)
       .then((nextBalance) => {
         if (!cancelled) setBalance(nextBalance);
       })
@@ -111,15 +133,33 @@ export function WalletMenu({ wallet }: { wallet: string }) {
     return () => {
       cancelled = true;
     };
-  }, [selectedToken, sendOpen, wallet]);
+  }, [selectedToken, sendOpen, sourceAddress]);
 
   function openSend() {
     setMenuOpen(false);
+    setTransferMode("send");
     setSendOpen(true);
     setSendError("");
     setStatus("idle");
     setTransactionHash(undefined);
   }
+
+  const openTopUp = useCallback(() => {
+    if (!wallet || !activeFundingWallet) return;
+    setMenuOpen(false);
+    setTransferMode("topUp");
+    setTokenId("USDG");
+    setRecipient(wallet);
+    setSendOpen(true);
+    setSendError("");
+    setStatus("idle");
+    setTransactionHash(undefined);
+  }, [activeFundingWallet, wallet]);
+
+  useEffect(() => {
+    if (!topUpRequest) return;
+    openTopUp();
+  }, [openTopUp, topUpRequest]);
 
   function openPrivyAccount() {
     setMenuOpen(false);
@@ -137,6 +177,7 @@ export function WalletMenu({ wallet }: { wallet: string }) {
     if (!open) {
       setRecipient("");
       setAmount("");
+      setTransferMode("send");
       setSendError("");
       setStatus("idle");
       setTransactionHash(undefined);
@@ -166,28 +207,15 @@ export function WalletMenu({ wallet }: { wallet: string }) {
 
     try {
       setStatus("preparing");
-      const client =
-        smartWalletClient ?? (await getClientForChain({ id: ROBINHOOD_CHAIN_ID }));
-      if (!client || client.account.address.toLowerCase() !== wallet.toLowerCase()) {
-        throw new Error("The active Privy smart wallet does not match this account.");
-      }
-
       const call = createSendCall(
         selectedToken,
         recipient as Address,
         amountBaseUnits
       );
-      await client.prepareUserOperation({ calls: [call] });
-      setStatus("signing");
-      const hash = await client.sendTransaction(
-        { calls: [call] },
-        {
-          uiOptions: {
-            description: `Send ${amount} ${selectedToken.symbol} to ${shortAddress(recipient)} on Robinhood Chain.`,
-            buttonText: `Send ${selectedToken.symbol}`
-          }
-        }
-      );
+      const hash =
+        transferMode === "topUp"
+          ? await sendTopUp(activeFundingWallet, call)
+          : await sendFromInvestmadeWallet(call);
       setTransactionHash(hash);
       setStatus("success");
       setBalance((current) =>
@@ -197,6 +225,48 @@ export function WalletMenu({ wallet }: { wallet: string }) {
       setStatus("idle");
       setSendError(sendErrorMessage(caught));
     }
+  }
+
+  async function sendFromInvestmadeWallet(call: ReturnType<typeof createSendCall>) {
+    const client =
+      smartWalletClient ?? (await getClientForChain({ id: ROBINHOOD_CHAIN_ID }));
+    if (!client || client.account.address.toLowerCase() !== wallet.toLowerCase()) {
+      throw new Error("The active Privy smart wallet does not match this account.");
+    }
+    await client.prepareUserOperation({ calls: [call] });
+    setStatus("signing");
+    return client.sendTransaction(
+      { calls: [call] },
+      {
+        uiOptions: {
+          description: `Send ${amount} ${selectedToken.symbol} to ${shortAddress(recipient)} on Robinhood Chain.`,
+          buttonText: `Send ${selectedToken.symbol}`
+        }
+      }
+    );
+  }
+
+  async function sendTopUp(
+    connectedWallet: ConnectedWallet | undefined,
+    call: ReturnType<typeof createSendCall>
+  ) {
+    if (!connectedWallet) throw new Error("Connect a funding wallet before topping up.");
+    await connectedWallet.switchChain(ROBINHOOD_CHAIN_ID);
+    const provider = await connectedWallet.getEthereumProvider();
+    setStatus("signing");
+    const hash = await provider.request({
+      method: "eth_sendTransaction",
+      params: [{
+        from: connectedWallet.address,
+        to: call.to,
+        data: call.data,
+        value: toHex(call.value)
+      }]
+    });
+    if (typeof hash !== "string") {
+      throw new Error("The funding wallet did not return a transaction hash.");
+    }
+    return hash as Hex;
   }
 
   return (
@@ -269,7 +339,9 @@ export function WalletMenu({ wallet }: { wallet: string }) {
             {status === "success" && transactionHash ? (
               <div className="send-success">
                 <span className="send-success-icon"><Check aria-hidden="true" /></span>
-                <Dialog.Title>Transfer submitted</Dialog.Title>
+                <Dialog.Title>
+                  {transferMode === "topUp" ? "Top-up submitted" : "Transfer submitted"}
+                </Dialog.Title>
                 <Dialog.Description>
                   {amount} {selectedToken.symbol} is on its way to {shortAddress(recipient)}.
                 </Dialog.Description>
@@ -294,9 +366,15 @@ export function WalletMenu({ wallet }: { wallet: string }) {
                 <div className="send-dialog-header">
                   <div>
                     <span className="account-label">Robinhood Chain · 4663</span>
-                    <Dialog.Title>Send from Investmade Wallet</Dialog.Title>
+                    <Dialog.Title>
+                      {transferMode === "topUp"
+                        ? "Top up Investmade Wallet"
+                        : "Send from Investmade Wallet"}
+                    </Dialog.Title>
                     <Dialog.Description>
-                      Review the details, then confirm once in Privy.
+                      {transferMode === "topUp"
+                        ? "Move tokens from your connected wallet to your Investmade Wallet."
+                        : "Review the details, then confirm once in Privy."}
                     </Dialog.Description>
                   </div>
                   <Dialog.Close asChild>
@@ -313,7 +391,7 @@ export function WalletMenu({ wallet }: { wallet: string }) {
 
                 <div className="send-from-row">
                   <span>From</span>
-                  <code>{wallet}</code>
+                  <code>{sourceAddress || "Funding wallet unavailable"}</code>
                 </div>
 
                 <div className="send-field">
@@ -358,7 +436,11 @@ export function WalletMenu({ wallet }: { wallet: string }) {
                 </div>
 
                 <label className="send-field">
-                  <span>Recipient address</span>
+                  <span>
+                    {transferMode === "topUp"
+                      ? "Recipient · Investmade Wallet"
+                      : "Recipient address"}
+                  </span>
                   <input
                     value={recipient}
                     onChange={(event) => {
@@ -368,7 +450,7 @@ export function WalletMenu({ wallet }: { wallet: string }) {
                     placeholder="0x…"
                     autoComplete="off"
                     spellCheck={false}
-                    disabled={busy}
+                    disabled={busy || transferMode === "topUp"}
                   />
                 </label>
 
@@ -421,7 +503,10 @@ export function WalletMenu({ wallet }: { wallet: string }) {
                       ? "Checking transaction…"
                       : status === "signing"
                         ? "Confirm in Privy…"
-                        : <>Send {selectedToken.symbol} <Send aria-hidden="true" /></>}
+                        : <>
+                            {transferMode === "topUp" ? "Top up" : "Send"} {selectedToken.symbol}
+                            <Send aria-hidden="true" />
+                          </>}
                   </button>
                 </div>
               </>

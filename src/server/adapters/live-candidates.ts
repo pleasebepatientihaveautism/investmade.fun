@@ -1,8 +1,13 @@
 import { createPublicClient, http } from "viem";
-import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, FEED_PAGE_SIZE } from "../../domain/constants.js";
+import {
+  ASSET_REGISTRY,
+  DEFAULT_SLOT_BUDGET,
+  FEED_PAGE_SIZE,
+  isDegenCommunityAsset
+} from "../../domain/constants.js";
 import type { Candidate } from "../../domain/schemas.js";
 import type { AppConfig } from "../config.js";
-import type { CandidateProvider } from "./types.js";
+import type { CandidateDiscoveryOptions, CandidateProvider } from "./types.js";
 import { UniswapProvider } from "./uniswap.js";
 
 interface RobinhoodAsset {
@@ -53,13 +58,18 @@ export class LiveCandidateProvider implements CandidateProvider {
     amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
     now = new Date(),
     requestedLimit = FEED_PAGE_SIZE,
-    excludedAssetIds: string[] = []
+    excludedAssetIds: string[] = [],
+    discoveryOptions: CandidateDiscoveryOptions = {}
   ): Promise<Candidate[]> {
     const excluded = new Set(excludedAssetIds);
     const assets = Object.values(ASSET_REGISTRY)
       .filter((asset) =>
         (!this.options.cryptoOnly || asset.kind === "CRYPTO") &&
+        (discoveryOptions.includeCommunity || !isDegenCommunityAsset(asset.assetId)) &&
         !excluded.has(asset.assetId)
+      )
+      .sort((left, right) =>
+        Number(isDegenCommunityAsset(right.assetId)) - Number(isDegenCommunityAsset(left.assetId))
       );
     const hasStocks = assets.some((asset) => asset.kind === "STOCK_TOKEN");
     const [registry, stockEligible] = hasStocks
@@ -105,20 +115,21 @@ export class LiveCandidateProvider implements CandidateProvider {
     const [registry, stockEligible] = hasStocks
       ? await Promise.all([this.assetRegistry(), this.stockEligible(wallet)])
       : [undefined, false] as const;
-    const candidates = await Promise.all(
-      assets.map((asset) =>
-        this.resolveCandidate(
-          asset,
-          wallet,
-          amountInBaseUnits,
-          now,
-          registry,
-          stockEligible,
-          false
-        )
-      )
-    );
-    return candidates.filter((candidate): candidate is Candidate => candidate !== undefined);
+    const candidates: Candidate[] = [];
+    // ponytail: execution refreshes are rare; serial requests avoid provider 429s.
+    for (const asset of assets) {
+      const candidate = await this.resolveCandidate(
+        asset,
+        wallet,
+        amountInBaseUnits,
+        now,
+        registry,
+        stockEligible,
+        false
+      );
+      if (candidate) candidates.push(candidate);
+    }
+    return candidates;
   }
 
   private async resolveCandidate(

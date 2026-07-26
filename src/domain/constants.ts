@@ -7,6 +7,8 @@ export const DEFAULT_SLOT_BUDGET = 10_000_000n;
 export const FEED_PAGE_SIZE = 10;
 export const MAX_SLIPPAGE_BPS = 50;
 export const MAX_PRICE_IMPACT_BPS = 100;
+/** Community routes are opt-in Degen-only and capped at 10% price impact. */
+export const MAX_DEGEN_PRICE_IMPACT_BPS = 1_000;
 export const QUOTE_TTL_SECONDS = 60;
 export const POLICY_VERSION = "investmade-policy/v1";
 
@@ -142,6 +144,38 @@ const CURATED_ASSET_REGISTRY = {
 } as const;
 
 /**
+ * Community tokens discovered in live Robinhood Chain Uniswap pools. They are
+ * intentionally available only when a user opts into Degen mode. Every route
+ * is still re-quoted live before it can be shown or executed.
+ */
+export const DEGEN_COMMUNITY_ASSETS = {
+  STEEL: {
+    assetId: "rh:4663:community:0af77e27f535256965944e617a386570f5c0432a",
+    symbol: "STEEL",
+    name: "Steel",
+    kind: "CRYPTO" as const,
+    address: "0x0AF77e27F535256965944E617a386570f5C0432a",
+    decimals: 18
+  },
+  YOINK: {
+    assetId: "rh:4663:community:a2718f80f1fe0cdec69c9023ee006807dd487a8c",
+    symbol: "YOINK",
+    name: "YOINK",
+    kind: "CRYPTO" as const,
+    address: "0xA2718f80f1FE0CdeC69c9023ee006807dD487a8c",
+    decimals: 18
+  }
+} as const;
+
+export const DEGEN_COMMUNITY_ASSET_IDS = new Set<string>(
+  Object.values(DEGEN_COMMUNITY_ASSETS).map((asset) => asset.assetId)
+);
+
+export function isDegenCommunityAsset(assetId: string): boolean {
+  return DEGEN_COMMUNITY_ASSET_IDS.has(assetId);
+}
+
+/**
  * The canonical Uniswap verified-token list for Robinhood Chain, plus WETH
  * which is the currently supported non-stock output route. This list is a
  * candidate universe; every token must still pass live permission, health, and
@@ -149,6 +183,7 @@ const CURATED_ASSET_REGISTRY = {
  */
 export const ASSET_REGISTRY: Record<string, RegistryAsset> = {
   WETH: CURATED_ASSET_REGISTRY.WETH,
+  ...DEGEN_COMMUNITY_ASSETS,
   ...Object.fromEntries(
     UNISWAP_ROBINHOOD_TOKENS.map((token) => [
       token.symbol,
@@ -186,6 +221,19 @@ export const STOCK_LOGO_DOMAINS: Record<string, string> = {
 /** CoinGecko IDs for crypto assets supported by the current Robinhood Chain registry. */
 export const COINGECKO_COIN_IDS: Record<string, string> = {
   WETH: "weth"
+};
+
+/**
+ * Company marks parsed from Forge's public company directory and stored
+ * locally so the app does not hotlink Forge or depend on its Cloudflare gate.
+ * Symbols without a Forge directory match fall back to the ticker-logo flow.
+ */
+export const FORGE_STOCK_ICONS: Record<string, string> = {
+  CBRS: "/assets/forge/cbrs.webp",
+  CRCL: "/assets/forge/crcl.webp",
+  CRWV: "/assets/forge/crwv.webp",
+  RDDT: "/assets/forge/rddt.webp",
+  SPCX: "/assets/forge/spcx.webp"
 };
 
 export type RegistryAsset = {

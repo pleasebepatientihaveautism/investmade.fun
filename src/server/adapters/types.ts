@@ -1,5 +1,9 @@
 import type { Candidate, ExecutionRequest, FeedInput, FeedOutput } from "../../domain/schemas.js";
 
+export type CandidateDiscoveryOptions = {
+  includeCommunity?: boolean;
+};
+
 export interface WalletCall {
   kind: "CANCEL_APPROVAL" | "APPROVAL" | "PERMIT" | "SWAP";
   assetId?: string;
@@ -22,7 +26,8 @@ export interface CandidateProvider {
     amountInBaseUnits?: string,
     now?: Date,
     limit?: number,
-    excludedAssetIds?: string[]
+    excludedAssetIds?: string[],
+    options?: CandidateDiscoveryOptions
   ): Promise<Candidate[]>;
   getCandidatesForExecution(
     wallet: string,

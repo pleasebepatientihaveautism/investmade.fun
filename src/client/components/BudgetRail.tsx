@@ -9,15 +9,17 @@ export function BudgetRail({
   onRemove,
   executionMode,
   ticketSizeUsd,
+  periodLimitUsd,
   cadence
 }: {
   selected: Candidate[];
   onRemove: (assetId: string) => void;
   executionMode: "demo" | "local-live" | "live";
   ticketSizeUsd: number;
+  periodLimitUsd: number;
   cadence: OnboardingPreferences["cadence"];
 }) {
-  const remaining = Math.round((100 - selected.length * ticketSizeUsd) * 100) / 100;
+  const remaining = Math.round((periodLimitUsd - selected.length * ticketSizeUsd) * 100) / 100;
   return (
     <aside className="budget-rail" aria-label={`This ${periodName(cadence)}'s budget`}>
       <div className="budget-summary">
@@ -30,10 +32,10 @@ export function BudgetRail({
         role="progressbar"
         aria-label="Period budget allocated"
         aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={100 - remaining}
+		aria-valuemax={periodLimitUsd}
+		aria-valuenow={periodLimitUsd - remaining}
       >
-        <span style={{ width: `${Math.min(100, selected.length * ticketSizeUsd)}%` }} />
+        <span style={{ width: `${Math.min(100, (selected.length * ticketSizeUsd / periodLimitUsd) * 100)}%` }} />
       </div>
       {selected.length ? (
         <>
@@ -54,7 +56,7 @@ export function BudgetRail({
       ) : null}
       <div className="budget-meta">
         <span>Quotes refresh before signing</span>
-        <span className="network-line"><i />Robinhood Chain · 4663 <b>{executionMode === "demo" ? "Demo" : executionMode === "local-live" ? "Live signing" : "Healthy"}</b></span>
+        <span className="network-line"><i />Robinhood Chain · 4663 <b>{executionMode === "demo" ? "Demo" : executionMode === "local-live" ? "Live signing" : "Live"}</b></span>
       </div>
     </aside>
   );

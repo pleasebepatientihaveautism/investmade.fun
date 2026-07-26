@@ -1,10 +1,12 @@
 import {
-  ASSET_REGISTRY,
-  MAX_PRICE_IMPACT_BPS,
+	ASSET_REGISTRY,
+	MAX_DEGEN_PRICE_IMPACT_BPS,
+	MAX_PRICE_IMPACT_BPS,
   PERIOD_BUDGET,
   POLICY_VERSION,
-  QUOTE_TTL_SECONDS
+	QUOTE_TTL_SECONDS
 } from "./constants.js";
+import { isDegenCommunityAsset } from "./constants.js";
 import { sha256 } from "./canonical.js";
 import {
   feedOutputSchema,
@@ -32,15 +34,18 @@ const registryById = new Map<string, (typeof ASSET_REGISTRY)[keyof typeof ASSET_
 
 export function eligibleCandidates(candidates: Candidate[], now = new Date()): Candidate[] {
   return candidates.filter((candidate) => {
-    const registered = registryById.get(candidate.assetId);
-    const quoteAgeMs = now.getTime() - new Date(candidate.quote.quotedAt).getTime();
+		const registered = registryById.get(candidate.assetId);
+		const quoteAgeMs = now.getTime() - new Date(candidate.quote.quotedAt).getTime();
+		const maxPriceImpactBps = isDegenCommunityAsset(candidate.assetId)
+			? MAX_DEGEN_PRICE_IMPACT_BPS
+			: MAX_PRICE_IMPACT_BPS;
     return Boolean(
       registered &&
         registered.address.toLowerCase() === candidate.contract.toLowerCase() &&
         candidate.eligible &&
         candidate.marketHealthy &&
         candidate.permissionAllowed &&
-        candidate.quote.priceImpactBps <= MAX_PRICE_IMPACT_BPS &&
+		candidate.quote.priceImpactBps <= maxPriceImpactBps &&
         quoteAgeMs >= 0 &&
         quoteAgeMs <= QUOTE_TTL_SECONDS * 1_000 &&
         new Date(candidate.quote.expiresAt).getTime() > now.getTime()

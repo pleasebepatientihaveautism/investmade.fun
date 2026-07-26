@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, FEED_PAGE_SIZE } from "../../domain/constants.js";
+import {
+  ASSET_REGISTRY,
+  DEFAULT_SLOT_BUDGET,
+  FEED_PAGE_SIZE,
+  isDegenCommunityAsset
+} from "../../domain/constants.js";
 import { sha256 } from "../../domain/canonical.js";
 import { unitPriceUsdFromQuote } from "../../domain/price.js";
 import type { Candidate, ExecutionRequest, FeedInput, FeedOutput } from "../../domain/schemas.js";
 import type {
   CandidateProvider,
+  CandidateDiscoveryOptions,
   ExecutionProvider,
   PrivateInferenceProvider
 } from "./types.js";
@@ -21,7 +27,9 @@ const outputs: Record<string, string> = {
   MSFT: "22200000000000000",
   TSLA: "30780000000000000",
   COST: "10000000000000000",
-  MU: "200000000000000000"
+  MU: "200000000000000000",
+  STEEL: "200000000000000000",
+  YOINK: "1000000000000000000000"
 };
 const demoMeta: Record<string, { priceImpactBps: number; crowdScoreBps: number; reason: string }> = {
   WETH: {
@@ -83,6 +91,16 @@ const demoMeta: Record<string, { priceImpactBps: number; crowdScoreBps: number; 
     priceImpactBps: 25,
     crowdScoreBps: 4_260,
     reason: "Eligible semiconductor exposure with a current executable route."
+  },
+  STEEL: {
+    priceImpactBps: 85,
+    crowdScoreBps: 8_200,
+    reason: "Degen community token with a fresh executable route and elevated volatility."
+  },
+  YOINK: {
+    priceImpactBps: 92,
+    crowdScoreBps: 8_050,
+    reason: "Degen community token with a fresh executable route and elevated volatility."
   }
 };
 
@@ -94,7 +112,8 @@ export class DemoProvider
     amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
     now = new Date(),
     limit = FEED_PAGE_SIZE,
-    excludedAssetIds: string[] = []
+    excludedAssetIds: string[] = [],
+    discoveryOptions: CandidateDiscoveryOptions = {}
   ): Promise<Candidate[]> {
     const excluded = new Set(excludedAssetIds);
     const expiresAt = new Date(now.getTime() + 60_000).toISOString();
@@ -102,7 +121,11 @@ export class DemoProvider
     return Object.values(ASSET_REGISTRY)
       .filter((asset) =>
         Boolean(outputs[asset.symbol] && demoMeta[asset.symbol]) &&
+        (discoveryOptions.includeCommunity || !isDegenCommunityAsset(asset.assetId)) &&
         !excluded.has(asset.assetId)
+      )
+      .sort((left, right) =>
+        Number(isDegenCommunityAsset(right.assetId)) - Number(isDegenCommunityAsset(left.assetId))
       )
       .slice(0, limit)
       .map((asset) => {

@@ -12,6 +12,8 @@ const envSchema = z
     PRIVY_APP_SECRET: z.string().min(1),
     DATABASE_URL: z.string().optional(),
     UNISWAP_API_KEY: z.string().optional(),
+    SUBSTREAMS_API_TOKEN: z.string().optional(),
+    THE_GRAPH_API_KEY: z.string().optional(),
     COINGECKO_API_KEY: z.string().optional(),
     ZG_ROUTER_API_KEY: z.string().optional(),
     WORLD_APP_ID: z.string().optional(),
@@ -41,10 +43,7 @@ const envSchema = z
       for (const key of [
         "DATABASE_URL",
         "UNISWAP_API_KEY",
-        "ZG_ROUTER_API_KEY",
-        "WORLD_APP_ID",
-        "WORLD_RP_ID",
-        "WORLD_RP_SIGNING_KEY"
+        "ZG_ROUTER_API_KEY"
       ] as const) {
         if (!env[key]) {
           context.addIssue({
@@ -61,16 +60,21 @@ export type AppConfig = z.infer<typeof envSchema> & {
   demoMode: boolean;
   localLiveExecution: boolean;
   liveExecution: boolean;
+  worldVerificationConfigured: boolean;
 };
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(source);
   const demoMode = parsed.INVESTMADE_DEMO_MODE === "true";
   const localLiveExecution = parsed.LOCAL_LIVE_EXECUTION === "true";
+  const worldVerificationConfigured = Boolean(
+    parsed.WORLD_APP_ID && parsed.WORLD_RP_ID && parsed.WORLD_RP_SIGNING_KEY
+  );
   return {
     ...parsed,
     demoMode,
     localLiveExecution,
-    liveExecution: localLiveExecution || !demoMode
+    liveExecution: localLiveExecution || !demoMode,
+    worldVerificationConfigured
   };
 }

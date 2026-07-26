@@ -24,6 +24,7 @@ import { DEFAULT_BUDGET } from "../domain/schemas.js";
 import { sha256 } from "../domain/canonical.js";
 import { executionIntent } from "../domain/execution-intent.js";
 import {
+	ASSET_REGISTRY,
 	FEED_PAGE_SIZE,
 	POLICY_VERSION,
 	USDG_ADDRESS,
@@ -46,6 +47,10 @@ import type {
 } from "./adapters/types.js";
 import type { StateStore } from "./store.js";
 import type { AssetIconProvider } from "./adapters/coingecko.js";
+import type {
+	PricePoint,
+	SubstreamsHistoryProvider,
+} from "./adapters/substreams-history.js";
 import { sessionEpochId } from "./session-epoch.js";
 
 export interface AppDependencies {
@@ -55,10 +60,14 @@ export interface AppDependencies {
 	inference: PrivateInferenceProvider;
 	execution: ExecutionProvider;
 	icons?: AssetIconProvider;
+	history?: SubstreamsHistoryProvider;
 }
 
 export function createApp(deps: AppDependencies) {
 	const app = express();
+	// Vercel terminates the public request before it reaches this function.
+	// Trust exactly that proxy hop so rate limiting keys off the real client IP.
+	if (deps.config.NODE_ENV === "production") app.set("trust proxy", 1);
 	const auth = new PrivyWalletAuth(
 		deps.config.PRIVY_APP_ID,
 		deps.config.PRIVY_APP_SECRET,
@@ -85,6 +94,7 @@ export function createApp(deps: AppDependencies) {
 						"blob:",
 						"https://*.world.org",
 						"https://coin-images.coingecko.com",
+						"https://img.logo.dev",
 						"https://cdn.tickerlogos.com",
 					],
 					childSrc: [
@@ -154,7 +164,7 @@ export function createApp(deps: AppDependencies) {
 			slotBudgetBaseUnits: DEFAULT_BUDGET.slotBudgetBaseUnits,
 			maxCards: DEFAULT_BUDGET.maxCards,
 			privy: { appId: deps.config.PRIVY_APP_ID },
-			world: deps.config.demoMode
+			world: !deps.config.worldVerificationConfigured
 				? null
 				: {
 						appId: deps.config.WORLD_APP_ID,
@@ -170,6 +180,37 @@ export function createApp(deps: AppDependencies) {
 		} catch {
 			response.json({ icons: {} });
 		}
+	});
+
+	app.get("/api/assets/:assetId/history", async (request, response) => {
+		const asset = Object.values(ASSET_REGISTRY).find(
+			(item) => item.assetId === request.params.assetId,
+		);
+		if (!asset) {
+			response.status(404).json({ error: "ASSET_NOT_FOUND" });
+			return;
+		}
+		// ponytail: demo data is local, so never wait on a network request to generate it.
+		if (deps.config.demoMode) {
+			response.json({ period: "1M", source: "demo", points: demoHistory(asset.symbol) });
+			return;
+		}
+		try {
+			const points = (await deps.history?.history(asset)) ?? [];
+			const monthAgo = Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60;
+			const monthlyPoints = points.filter((point) => point.timestamp >= monthAgo);
+			if (monthlyPoints.length >= 2) {
+				response.json({ period: "1M", source: "the-graph", points: monthlyPoints });
+				return;
+			}
+		} catch {
+			// Charts are enrichment; quote and execution flows must remain available.
+		}
+		response.json({
+			period: "1M",
+			source: "unavailable",
+			points: [],
+		});
 	});
 
 	app.get("/api/balances/:address/usdg", async (request, response) => {
@@ -308,7 +349,7 @@ export function createApp(deps: AppDependencies) {
 				return;
 			}
 			if (
-				!deps.config.demoMode &&
+				deps.config.worldVerificationConfigured &&
 				!(await deps.store.isHumanVerified(response.locals.wallet))
 			) {
 				response.status(403).json({ error: "WORLD_VERIFICATION_REQUIRED" });
@@ -317,7 +358,10 @@ export function createApp(deps: AppDependencies) {
 			const submittedPreferences = onboardingPreferencesSchema.parse(
 				request.body,
 			);
-			const budget = budgetForTicket(submittedPreferences.ticketSizeUsd);
+			const budget = budgetForTicket(
+				submittedPreferences.ticketSizeUsd,
+				submittedPreferences.periodLimitUsd ?? 100,
+			);
 			const candidateLimit = z
 				.number()
 				.int()
@@ -338,6 +382,7 @@ export function createApp(deps: AppDependencies) {
 				undefined,
 				candidateLimit,
 				excludedAssetIds,
+				{ includeCommunity: preferences.riskMode === "degen" },
 			);
 			timing.mark("candidates");
 			// Candidate discovery uses bounded concurrency. Apply the exact policy
@@ -901,6 +946,22 @@ export function createApp(deps: AppDependencies) {
 		},
 	);
 	return app;
+}
+
+function demoHistory(symbol: string): PricePoint[] {
+	const seed = [...symbol].reduce(
+		(value, character) => value + character.charCodeAt(0),
+		0,
+	);
+	const now = Math.floor(Date.now() / 1000);
+	return Array.from({ length: 31 }, (_, index) => {
+		const drift = index * ((seed % 7) - 2) * 0.0018;
+		const wave = Math.sin(index * 0.7 + seed) * 0.018;
+		return {
+			timestamp: now - (30 - index) * 86_400,
+			price: 100 * (1 + drift + wave),
+		};
+	});
 }
 
 function serverTiming(route: "feed" | "prepare", log: boolean) {

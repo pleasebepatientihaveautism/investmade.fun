@@ -2,17 +2,21 @@ import { describe, expect, it } from "vitest";
 import { CoinGeckoIconProvider } from "../src/server/adapters/coingecko.js";
 
 describe("CoinGeckoIconProvider", () => {
-  it("maps CoinGecko images to the supported crypto symbols and caches the result", async () => {
+  it("combines local Forge stock icons with CoinGecko crypto icons and caches the result", async () => {
     const fetcher = async () =>
       new Response(JSON.stringify([{ id: "weth", image: "https://coin-images.coingecko.com/weth.png" }]));
     const provider = new CoinGeckoIconProvider("test-key", fetcher as typeof fetch);
 
-    await expect(provider.getIcons()).resolves.toEqual({
+    const icons = await provider.getIcons();
+    expect(icons).toMatchObject({
+      CBRS: "/assets/forge/cbrs.webp",
+      CRCL: "/assets/forge/crcl.webp",
+      CRWV: "/assets/forge/crwv.webp",
+      RDDT: "/assets/forge/rddt.webp",
+      SPCX: "/assets/forge/spcx.webp",
       WETH: "https://coin-images.coingecko.com/weth.png"
     });
-    await expect(provider.getIcons()).resolves.toEqual({
-      WETH: "https://coin-images.coingecko.com/weth.png"
-    });
+    await expect(provider.getIcons()).resolves.toEqual(icons);
   });
 
   it("does not make a request when no server-side API key is configured", async () => {
@@ -20,6 +24,9 @@ describe("CoinGeckoIconProvider", () => {
       throw new Error("fetch should not run");
     }) as typeof fetch);
 
-    await expect(provider.getIcons()).resolves.toEqual({});
+    await expect(provider.getIcons()).resolves.toMatchObject({
+      CBRS: "/assets/forge/cbrs.webp",
+      SPCX: "/assets/forge/spcx.webp"
+    });
   });
 });

@@ -24,4 +24,18 @@ describe("execution modes", () => {
       "LOCAL_LIVE_EXECUTION must not run in production"
     );
   });
+
+  it("starts live production without World when persistent state, quotes, and private inference are configured", () => {
+    const config = loadConfig({
+      ...base,
+      NODE_ENV: "production",
+      INVESTMADE_DEMO_MODE: "false",
+      DATABASE_URL: "postgresql://user:password@example.com:5432/investmade",
+      ZG_ROUTER_API_KEY: "test-0g-router-key"
+    });
+
+    expect(config.liveExecution).toBe(true);
+    expect(config.demoMode).toBe(false);
+    expect(config.worldVerificationConfigured).toBe(false);
+  });
 });

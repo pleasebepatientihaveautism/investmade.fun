@@ -18,6 +18,7 @@ import { ArrowRight, Check, Shield } from "./Icons";
 type Step =
 	| "welcome"
 	| "cadence"
+	| "limit"
 	| "ticket"
 	| "risk"
 	| "assets"
@@ -26,10 +27,14 @@ type Step =
 	| "world";
 type RiskMode = OnboardingPreferences["riskMode"];
 type AssetChoice = "CRYPTO" | "STOCK_TOKEN" | "BOTH";
-type TicketChoice = 2 | 10 | 25 | "custom";
+type PeriodLimitChoice = 10 | 50 | 100 | "custom";
+type TicketChoice = 0.1 | 1 | 10 | "custom";
 
 interface PreferenceDraft {
 	cadence?: OnboardingPreferences["cadence"];
+	periodLimitUsd?: number;
+	periodLimitChoice?: PeriodLimitChoice;
+	customPeriodLimitInput: string;
 	ticketSizeUsd?: number;
 	ticketChoice?: TicketChoice;
 	customTicketInput: string;
@@ -41,20 +46,31 @@ interface PreferenceDraft {
 const CADENCE_OPTIONS = [
 	{
 		id: "daily",
-		title: "1 day",
-		description: "Build a new investment session every day.",
+		title: "Daily limit",
+		description: "One fresh basket every day.",
 	},
 	{
 		id: "weekly",
-		title: "1 week",
-		description: "Build a new investment session every week.",
+		title: "Weekly limit",
+		description: "One fresh basket every week.",
 	},
 	{
 		id: "monthly",
-		title: "1 month",
-		description: "Build a new investment session every month.",
+		title: "Monthly limit",
+		description: "One fresh basket every month.",
 	},
 ] as const;
+
+const PERIOD_LIMIT_OPTIONS: Array<{
+	id: PeriodLimitChoice;
+	title: string;
+	description: string;
+}> = [
+	{ id: 10, title: "$10", description: "Keep it tight. Learn the flow." },
+	{ id: 50, title: "$50", description: "A balanced amount for the period." },
+	{ id: 100, title: "$100", description: "Use the full onchain limit." },
+	{ id: "custom", title: "Custom", description: "Set any amount from $10 to $100." },
+];
 
 const TICKET_OPTIONS: Array<{
 	id: TicketChoice;
@@ -62,24 +78,24 @@ const TICKET_OPTIONS: Array<{
 	description: string;
 }> = [
 	{
-		id: 2,
-		title: "$2",
-		description: "Small test-sized allocation per accepted card.",
+		id: 0.1,
+		title: "$0.10",
+		description: "Tiny test buy. Purely for the vibes.",
+	},
+	{
+		id: 1,
+		title: "$1",
+		description: "Small conviction, low exposure.",
 	},
 	{
 		id: 10,
 		title: "$10",
-		description: "Balanced default allocation per accepted card.",
-	},
-	{
-		id: 25,
-		title: "$25",
-		description: "Larger allocation with up to four accepted cards.",
+		description: "One clean decision with real size.",
 	},
 	{
 		id: "custom",
-		title: "Another amount",
-		description: "Choose $0.10 to $100.00, including cents.",
+		title: "Another",
+		description: "Choose your own decision size.",
 	},
 ];
 
@@ -153,7 +169,8 @@ export function Onboarding({
 			candidate.walletClientType === "privy" ||
 			candidate.walletClientType === "privy-v2",
 	);
-	const requiresWorldVerification = config.executionMode === "live";
+	const requiresWorldVerification =
+		config.executionMode === "live" && Boolean(config.world);
 	const wallet = (
 		user?.smartWallet?.address ??
 		smartWalletClient?.account.address ??
@@ -291,34 +308,38 @@ export function Onboarding({
 		>
 			<section className="onboarding-copy">
 				<span className="eyebrow">Your investment plan</span>
-				<h1>Your market swipe, bounded by you.</h1>
+				<h1>Stocks and crypto. One DCA ritual.</h1>
 				<p>
-					Answer five short questions. investmade.fun uses them only to
-					constrain and rank executable candidates. Your 100 USDG stays in your
-					wallet until you review and sign.
+					Set your period, cap, ticket, risk mode, and asset mix. We use
+					those rules to constrain and rank executable candidates. Your USDG
+					stays in your wallet until you review and sign.
 				</p>
 				<div className="onboarding-points">
 					<p>
 						<span>1</span>
-						<b>Your pace and ticket</b>
+						<b>Set your rules</b>
 						<small>
-							Choose daily, weekly, or monthly, then set the amount for each
-							accepted card.
+							Choose the reset period, max spend, and amount for each swipe.
 						</small>
 					</p>
 					<p>
 						<span>2</span>
-						<b>Private personalization</b>
+						<b>
+							{config.executionMode === "live"
+								? "Private ranking"
+								: "Bounded ranking"}
+						</b>
 						<small>
-							Your cadence, ticket, risk mode, and asset mix become bounded 0G
-							input.
+							{config.executionMode === "live"
+								? "Your settings become bounded input for private 0G inference."
+								: "Your settings constrain the local demo feed."}
 						</small>
 					</p>
 					<p>
 						<span>3</span>
-						<b>You approve execution</b>
+						<b>You call the shot</b>
 						<small>
-							AI ranks; deterministic policy checks; your wallet signs.
+							AI ranks. Policy checks. Your wallet signs.
 						</small>
 					</p>
 				</div>
@@ -346,7 +367,9 @@ export function Onboarding({
 						</h2>
 						<p>
 							{step === "wallet"
-								? "One smart wallet · one atomic basket · Robinhood Chain"
+								? config.demoMode
+									? "Real Privy wallet · simulated basket"
+									: "One smart wallet · one atomic basket · Robinhood Chain"
 								: "Bound to your authenticated investmade.fun account"}
 						</p>
 						{completedPreferences ? (
@@ -386,7 +409,7 @@ export function Onboarding({
 						<small>
 							{config.demoMode
 								? "Local demo: Privy is real; trading and settlement are simulated."
-								: "No deposit. No trading mandate. No autonomous execution."}
+								: "Non-custodial. No trading mandate. No autonomous execution."}
 						</small>
 					</>
 				)}
@@ -404,7 +427,7 @@ function QuestionFlow({
 }: {
 	step: Extract<
 		Step,
-		"welcome" | "cadence" | "ticket" | "risk" | "assets" | "review"
+		"welcome" | "cadence" | "limit" | "ticket" | "risk" | "assets" | "review"
 	>;
 	draft: PreferenceDraft;
 	onDraft: React.Dispatch<React.SetStateAction<PreferenceDraft>>;
@@ -412,7 +435,7 @@ function QuestionFlow({
 	onSave: () => void;
 }) {
 	const questionNumber =
-		["cadence", "ticket", "risk", "assets", "review"].indexOf(step) + 1;
+		["cadence", "limit", "ticket", "risk", "assets"].indexOf(step) + 1;
 
 	if (step === "welcome") {
 		return (
@@ -420,8 +443,8 @@ function QuestionFlow({
 				<span className="onboarding-kicker">New here?</span>
 				<h2>Build your investment guardrails</h2>
 				<p>
-					Choose how often you invest and the amount for each accepted card. The
-					100 USDG period limit stays fixed; unused funds remain in your wallet.
+					Set your period, cap, and decision size. Your money stays in your wallet
+					until you review and approve a basket.
 				</p>
 				<div className="onboarding-trust-note">
 					<Shield />
@@ -442,7 +465,7 @@ function QuestionFlow({
 
 	return (
 		<>
-			<div className="question-progress">
+			{step !== "review" ? <div className="question-progress">
 				<span>Question {questionNumber} of 5</span>
 				<div aria-hidden="true">
 					{[1, 2, 3, 4, 5].map((number) => (
@@ -452,15 +475,13 @@ function QuestionFlow({
 						/>
 					))}
 				</div>
-			</div>
+			</div> : null}
 
 			{step === "cadence" ? (
 				<>
-					<span className="onboarding-kicker">Investment frequency</span>
-					<h2>How often do you want to invest?</h2>
-					<p>
-						Each period gets a separate session and a 100 USDG spending limit.
-					</p>
+					<span className="onboarding-kicker">Your pace</span>
+					<h2>Investment period</h2>
+					<p>Choose when your limit resets. Keep it simple and stick to the plan.</p>
 					<div className="question-options">
 						{CADENCE_OPTIONS.map((option) => (
 							<button
@@ -485,19 +506,38 @@ function QuestionFlow({
 					</div>
 					<QuestionActions
 						back={() => onStep("welcome")}
-						next={() => onStep("ticket")}
+						next={() => onStep("limit")}
 						nextDisabled={!draft.cadence}
 					/>
 				</>
 			) : null}
 
+			{step === "limit" ? (
+				<>
+					<span className="onboarding-kicker">Your cap</span>
+					<h2>Set this limit</h2>
+					<p>Your max spend for each period. Nothing goes out until you approve a basket.</p>
+					<div className="question-options ticket-options">
+						{PERIOD_LIMIT_OPTIONS.map((option) => (
+							<button type="button" className={draft.periodLimitChoice === option.id ? "question-option selected" : "question-option"} onClick={() => onDraft((current) => ({ ...current, periodLimitChoice: option.id, periodLimitUsd: typeof option.id === "number" ? option.id : customPeriodLimit(current.customPeriodLimitInput) }))} key={option.id}>
+								<span><b>{option.title}</b>{option.id === 50 ? <em>Popular</em> : null}</span>
+								<small>{option.description}</small>
+								{draft.periodLimitChoice === option.id ? <Check /> : null}
+							</button>
+						))}
+					</div>
+					{draft.periodLimitChoice === "custom" ? (
+						<label className="custom-ticket"><span>Custom period limit</span><span><b>$</b><input type="number" min="10" max="100" step="0.01" inputMode="decimal" value={draft.customPeriodLimitInput} onChange={(event) => { const value = event.target.value; onDraft((current) => ({ ...current, customPeriodLimitInput: value, periodLimitUsd: customPeriodLimit(value) })); }} placeholder="10.00–100.00" /></span><small>USDG limit from $10.00 to $100.00.</small></label>
+					) : null}
+					<QuestionActions back={() => onStep("cadence")} next={() => onStep("ticket")} nextDisabled={!draft.periodLimitUsd} />
+				</>
+			) : null}
+
 			{step === "ticket" ? (
 				<>
-					<span className="onboarding-kicker">Ticket size</span>
-					<h2>How much per accepted card?</h2>
-					<p>
-						Choose $2, $10, $25, or enter another amount such as $0.10 or $0.25.
-					</p>
+					<span className="onboarding-kicker">Your move</span>
+					<h2>What will one investment decision be?</h2>
+					<p>Each tap uses this amount. Stay inside your period limit.</p>
 					<div className="question-options ticket-options">
 						{TICKET_OPTIONS.map((option) => (
 							<button
@@ -521,7 +561,7 @@ function QuestionFlow({
 							>
 								<span>
 									<b>{option.title}</b>
-									{option.id === 10 ? <em>Recommended</em> : null}
+									{option.id === 1 ? <em>Easy start</em> : null}
 								</span>
 								<small>{option.description}</small>
 								{draft.ticketChoice === option.id ? <Check /> : null}
@@ -536,7 +576,7 @@ function QuestionFlow({
 								<input
 									type="number"
 									min="0.1"
-									max="100"
+									max={draft.periodLimitUsd ?? 100}
 									step="0.01"
 									inputMode="decimal"
 									value={draft.customTicketInput}
@@ -548,19 +588,19 @@ function QuestionFlow({
 											ticketSizeUsd: customTicket(value),
 										}));
 									}}
-									placeholder="0.10–100.00"
+									placeholder={`0.10–${draft.periodLimitUsd ?? 100}.00`}
 									aria-describedby="custom-ticket-help"
 								/>
 							</span>
 							<small id="custom-ticket-help">
-								USDG amount from $0.10 to $100.00, in $0.01 increments.
+								{`USDG amount from $0.10 to $${draft.periodLimitUsd ?? 100}.00.`}
 							</small>
 						</label>
 					) : null}
 					<QuestionActions
-						back={() => onStep("cadence")}
+						back={() => onStep("limit")}
 						next={() => onStep("risk")}
-						nextDisabled={!draft.ticketSizeUsd}
+						nextDisabled={!draft.ticketSizeUsd || draft.ticketSizeUsd > (draft.periodLimitUsd ?? 100)}
 					/>
 				</>
 			) : null}
@@ -733,7 +773,7 @@ function PlanSummary({
 			</p>
 			<p>
 				<span>Period limit</span>
-				<b>100 USDG total · no fixed card limit</b>
+				<b>{preferences.periodLimitUsd ?? 100} USDG total</b>
 			</p>
 			<p>
 				<span>Risk mode</span>
@@ -751,9 +791,9 @@ function isQuestionStep(
 	step: Step,
 ): step is Extract<
 	Step,
-	"welcome" | "cadence" | "ticket" | "risk" | "assets" | "review"
+	"welcome" | "cadence" | "limit" | "ticket" | "risk" | "assets" | "review"
 > {
-	return ["welcome", "cadence", "ticket", "risk", "assets", "review"].includes(
+	return ["welcome", "cadence", "limit", "ticket", "risk", "assets", "review"].includes(
 		step,
 	);
 }
@@ -779,7 +819,9 @@ function toCompletedPreferences(
 	const assetClasses = assetClassesFrom(draft.assetChoice);
 	if (
 		!draft.cadence ||
+		!draft.periodLimitUsd ||
 		!draft.ticketSizeUsd ||
+		draft.ticketSizeUsd > draft.periodLimitUsd ||
 		!draft.riskMode ||
 		!assetClasses.length ||
 		!draft.riskDisclosureAccepted
@@ -787,6 +829,7 @@ function toCompletedPreferences(
 		return;
 	return {
 		cadence: draft.cadence,
+		periodLimitUsd: draft.periodLimitUsd,
 		ticketSizeUsd: draft.ticketSizeUsd,
 		riskMode: draft.riskMode,
 		assetClasses,
@@ -797,6 +840,7 @@ function toCompletedPreferences(
 function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 	return {
 		cadence: draft.cadence ?? "weekly",
+		periodLimitUsd: draft.periodLimitUsd ?? 100,
 		ticketSizeUsd: draft.ticketSizeUsd ?? 10,
 		riskMode: draft.riskMode ?? "balanced",
 		assetClasses: assetClassesFrom(draft.assetChoice),
@@ -806,6 +850,7 @@ function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 
 function emptyDraft(): PreferenceDraft {
 	return {
+		customPeriodLimitInput: "",
 		customTicketInput: "",
 		riskDisclosureAccepted: false,
 	};
@@ -816,6 +861,13 @@ function draftFromPreferences(
 ): PreferenceDraft {
 	return {
 		cadence: preferences.cadence,
+		periodLimitUsd: preferences.periodLimitUsd ?? 100,
+		periodLimitChoice: isPresetPeriodLimit(preferences.periodLimitUsd ?? 100)
+			? (preferences.periodLimitUsd ?? 100) as 10 | 50 | 100
+			: "custom",
+		customPeriodLimitInput: isPresetPeriodLimit(preferences.periodLimitUsd ?? 100)
+			? ""
+			: String(preferences.periodLimitUsd),
 		ticketSizeUsd: preferences.ticketSizeUsd,
 		ticketChoice: isPresetTicket(preferences.ticketSizeUsd)
 			? preferences.ticketSizeUsd
@@ -835,8 +887,20 @@ function customTicket(value: string): number | undefined {
 	return isTicketSizeUsd(rounded) ? rounded : undefined;
 }
 
-function isPresetTicket(value: number): value is 2 | 10 | 25 {
-	return value === 2 || value === 10 || value === 25;
+function customPeriodLimit(value: string): number | undefined {
+	const parsed = Number(value);
+	const rounded = Math.round(parsed * 100) / 100;
+	return parsed >= 10 && parsed <= 100 && Number.isFinite(parsed) && Math.abs(parsed - rounded) < 1e-8
+		? rounded
+		: undefined;
+}
+
+function isPresetPeriodLimit(value: number): value is 10 | 50 | 100 {
+	return value === 10 || value === 50 || value === 100;
+}
+
+function isPresetTicket(value: number): value is 0.1 | 1 | 10 {
+	return value === 0.1 || value === 1 || value === 10;
 }
 
 function cadenceLabel(cadence: OnboardingPreferences["cadence"]) {

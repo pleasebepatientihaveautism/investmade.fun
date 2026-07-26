@@ -30,7 +30,7 @@ fn i32_value(value: impl ToString) -> i32 {
 }
 
 #[substreams::handlers::map]
-fn map_events(block: eth::Block) -> Result<Events, Error> {
+fn map_events(block: eth::Block) -> Result<Option<Events>, Error> {
     let timestamp = block
         .header
         .as_ref()
@@ -82,5 +82,9 @@ fn map_events(block: eth::Block) -> Result<Events, Error> {
         }
     }
 
-    Ok(Events { initializes, swaps })
+    if initializes.is_empty() && swaps.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(Events { initializes, swaps }))
 }

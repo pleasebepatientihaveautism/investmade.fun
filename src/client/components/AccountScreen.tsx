@@ -1,6 +1,6 @@
 import { formatUnits } from "viem";
 import { useEffect, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { ArrowDownToLine, Check, Copy } from "lucide-react";
 import type { OnboardingPreferences } from "../../domain/schemas";
 import { formatTicketSizeUsd, isTicketSizeUsd } from "../../domain/schemas";
 import { api } from "../api";
@@ -11,9 +11,9 @@ const RISK_OPTIONS = ["conservative", "balanced", "degen"] as const;
 export function AccountScreen({
 	wallet,
 	fundingWallet,
-	smartWalletReady,
 	preferences,
 	developerMode,
+	onTopUp,
 	onResetDemoWeek,
 	onSave,
 }: {
@@ -22,6 +22,7 @@ export function AccountScreen({
 	smartWalletReady: boolean;
 	preferences: OnboardingPreferences;
 	developerMode: boolean;
+	onTopUp: () => void;
 	onResetDemoWeek: () => Promise<void>;
 	onSave: (preferences: OnboardingPreferences) => Promise<void>;
 }) {
@@ -119,7 +120,7 @@ export function AccountScreen({
 					</strong>
 					<small>
 						{balanceError ||
-							"This smart wallet funds and atomically executes every basket."}
+							"This smart wallet holds your USDG and executes each atomic basket."}
 					</small>
 				</div>
 				<div className="account-address">
@@ -143,47 +144,18 @@ export function AccountScreen({
 							)}
 						</button>
 					) : null}
+					<button
+						type="button"
+						className="button button-top-up"
+						onClick={onTopUp}
+						disabled={!wallet || !fundingWallet}
+					>
+						Top up <ArrowDownToLine aria-hidden="true" />
+					</button>
 				</div>
 			</section>
 
 			<section className="wallet-identity-grid" aria-label="Wallet roles">
-				<article>
-					<div className="wallet-role-heading">
-						<span className="account-label">Execution wallet</span>
-						<span
-							className={smartWalletReady ? "wallet-ready" : "wallet-pending"}
-						>
-							{smartWalletReady ? "Ready" : "Activation required"}
-						</span>
-					</div>
-					<h2>Investmade Wallet</h2>
-					<div className="wallet-role-address">
-						<code>{wallet ? shortAddress(wallet) : "Not available"}</code>
-						{wallet ? (
-							<button
-								type="button"
-								className="copy-address copy-address-compact"
-								aria-label={
-									addressCopied === "smart"
-										? "Address copied"
-										: "Copy Investmade Wallet address"
-								}
-								title={addressCopied === "smart" ? "Copied" : "Copy address"}
-								onClick={() => void copyAddress(wallet, "smart")}
-							>
-								{addressCopied === "smart" ? (
-									<Check aria-hidden="true" />
-								) : (
-									<Copy aria-hidden="true" />
-								)}
-							</button>
-						) : null}
-					</div>
-					<p>
-						Receives USDG, holds assets, and sends the complete basket as one
-						ERC-4337 operation.
-					</p>
-				</article>
 				<article>
 					<div className="wallet-role-heading">
 						<span className="account-label">Connected signer</span>
@@ -231,13 +203,15 @@ export function AccountScreen({
 						<span className="account-label">Investment settings</span>
 						<h2 id="settings-title">Your next session</h2>
 					</div>
-					<span className="settings-limit">100 USDG period limit</span>
+					<span className="settings-limit">
+						{formatTicketSizeUsd(draft.periodLimitUsd ?? 100)} USDG period limit
+					</span>
 				</div>
 
 				<div className="settings-field">
-					<span>How often can you use Investmade?</span>
+					<span>When does your DCA session reset?</span>
 					<SelectMenu
-						ariaLabel="How often can you use Investmade? A new session is available once per selected period."
+						ariaLabel="When does your DCA session reset? A new session is available once per selected period."
 						value={draft.cadence}
 						options={CADENCE_OPTIONS.map((cadence) => ({
 							value: cadence,
@@ -260,7 +234,7 @@ export function AccountScreen({
 						<input
 							type="number"
 							min="0.1"
-							max="100"
+							max={draft.periodLimitUsd ?? 100}
 							step="0.01"
 							inputMode="decimal"
 							value={formatTicketSizeUsd(draft.ticketSizeUsd)}
@@ -272,7 +246,10 @@ export function AccountScreen({
 							}
 						/>
 					</div>
-					<small>USDG amount from $0.10 to $100.00, in $0.01 increments.</small>
+					<small>
+						USDG amount from $0.10 to $
+						{formatTicketSizeUsd(draft.periodLimitUsd ?? 100)}, in $0.01 increments.
+					</small>
 				</label>
 
 				<fieldset className="settings-field">

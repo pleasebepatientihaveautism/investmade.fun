@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { ConnectedWallet } from "@privy-io/react-auth";
 import { WalletCards } from "lucide-react";
 import { WalletMenu } from "./WalletMenu";
 
@@ -6,6 +7,8 @@ interface Props {
 	active: "week" | "positions" | "receipts" | "account";
 	onNavigate: (target: Props["active"]) => void;
 	wallet?: string;
+	fundingWallet?: ConnectedWallet;
+	topUpRequest?: number;
 	onWallet?: () => void;
 	walletReady?: boolean;
 	navigationEnabled?: boolean;
@@ -16,6 +19,8 @@ export function AppShell({
 	active,
 	onNavigate,
 	wallet,
+	fundingWallet,
+	topUpRequest,
 	onWallet,
 	walletReady = true,
 	navigationEnabled = true,
@@ -23,7 +28,7 @@ export function AppShell({
 }: Props) {
 	return (
 		<div className="app-shell">
-			<header className="topbar">
+			<header className={navigationEnabled ? "topbar" : "topbar topbar-onboarding"}>
 				<button
 					type="button"
 					className="brand"
@@ -36,7 +41,7 @@ export function AppShell({
 					<nav aria-label="Primary navigation">
 						{[
 							["week", "Basket"],
-							["positions", "Holdings"],
+							["positions", "Portfolio"],
 							["receipts", "Activity"],
 							["account", "Account"],
 						].map(([id, label]) => (
@@ -50,12 +55,14 @@ export function AppShell({
 							</button>
 						))}
 					</nav>
-				) : (
-					<div aria-hidden="true" />
-				)}
+				) : null}
 				{wallet ? (
 					<div className="wallet-pill">
-						<WalletMenu wallet={wallet} />
+						<WalletMenu
+							wallet={wallet}
+							fundingWallet={fundingWallet}
+							topUpRequest={topUpRequest}
+						/>
 					</div>
 				) : (
 					<button
@@ -73,6 +80,8 @@ export function AppShell({
 			</header>
 			{children}
 			<footer className="logo-attribution">
+				<a href="https://forgeglobal.com/search-companies/">Selected company marks from Forge</a>
+				<span> · </span>
 				<a href="https://www.coingecko.com/en/api">Crypto icons by CoinGecko</a>
 				<span> · </span>
 				<a href="https://logo.dev">Logos provided by Logo.dev</a>

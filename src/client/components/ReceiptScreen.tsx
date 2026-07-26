@@ -46,10 +46,14 @@ export function ReceiptScreen({
         <div><h1>{receiptStatus.title}</h1><p>{receiptStatus.description}</p></div>
       </div>
       <section className="receipt-ledger">
-        <div className="receipt-header"><h2>Atomic basket receipt</h2><span>{record.plan.epochId}</span></div>
+        <div className="receipt-header"><h2>{demoMode ? "Demo basket receipt" : "Atomic basket receipt"}</h2><span>{record.plan.epochId}</span></div>
         <div className="atomic-receipt-strip">
-          <b>One confirmation · one operation</b>
-          <span>{record.plan.quotes.length} swaps execute together or the complete basket reverts.</span>
+          <b>{demoMode ? "Simulated basket · no transaction" : "One confirmation · one operation"}</b>
+          <span>
+            {demoMode
+              ? `${record.plan.quotes.length} swap legs were simulated locally.`
+              : `${record.plan.quotes.length} swaps execute together or the complete basket reverts.`}
+          </span>
           {transactionHash ? (
             demoMode ? <code>{shortHash(transactionHash)}</code> : (
               <a href={explorerUrl(transactionHash)} target="_blank" rel="noreferrer">{shortHash(transactionHash)}</a>
@@ -102,7 +106,7 @@ export function ReceiptScreen({
         <h2>Proof chain</h2>
         <p><Shield /><span>Authorized plan<b>{shortHash(record.plan.authorizedPlanHash)}</b></span></p>
         <p><Shield /><span>Policy hash<b>{shortHash(record.plan.policyHash)}</b></span></p>
-        <p><Shield /><span>0G output<b>{feed ? shortHash(feed.proof.outputCommitment) : "Feed snapshot unavailable"}</b></span></p>
+        <p><Shield /><span>{demoMode ? "Ranking output" : "0G output"}<b>{feed ? shortHash(feed.proof.outputCommitment) : "Feed snapshot unavailable"}</b></span></p>
         <p><Shield /><span>{isTerminal ? "Terminal outcome" : "Onchain status"}<b>{record.status}</b></span></p>
         <div className={demoMode ? "demo-disclosure" : "live-disclosure"}>
           {demoMode
@@ -119,7 +123,9 @@ function receiptCopy(status: ExecutionRecord["status"], totalLegs: number, succe
     return { title: "Basket submitted", description: "Your Investmade Wallet broadcast one atomic operation. Waiting for Robinhood Chain settlement." };
   }
   if (status === "SETTLED") {
-    return { title: "Basket settled", description: `All ${totalLegs} legs reached a verified terminal state${demoMode ? " in local demo mode" : " on Robinhood Chain"}.` };
+    return demoMode
+      ? { title: "Demo complete", description: `All ${totalLegs} legs completed in local demo mode. No transaction was broadcast.` }
+      : { title: "Basket settled", description: `All ${totalLegs} legs reached a verified terminal state on Robinhood Chain.` };
   }
   if (status === "PARTIAL") {
     return { title: "Basket partially settled", description: `${successfulLegs} of ${totalLegs} legs reached a verified terminal state. Review the receipt before trying again.` };

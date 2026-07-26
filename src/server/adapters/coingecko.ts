@@ -1,4 +1,4 @@
-import { COINGECKO_COIN_IDS } from "../../domain/constants.js";
+import { COINGECKO_COIN_IDS, FORGE_STOCK_ICONS } from "../../domain/constants.js";
 
 const COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
@@ -8,7 +8,7 @@ export interface AssetIconProvider {
 }
 
 export class CoinGeckoIconProvider implements AssetIconProvider {
-  private cached: Record<string, string> = {};
+  private cached: Record<string, string> = { ...FORGE_STOCK_ICONS };
   private expiresAt = 0;
 
   constructor(
@@ -17,7 +17,7 @@ export class CoinGeckoIconProvider implements AssetIconProvider {
   ) {}
 
   async getIcons(): Promise<Record<string, string>> {
-    if (!this.apiKey) return {};
+    if (!this.apiKey) return { ...FORGE_STOCK_ICONS };
     if (Date.now() < this.expiresAt) return this.cached;
 
     const ids = [...new Set(Object.values(COINGECKO_COIN_IDS))];
@@ -34,12 +34,15 @@ export class CoinGeckoIconProvider implements AssetIconProvider {
     const iconById = new Map(
       rows.flatMap((row) => (row.id && row.image ? [[row.id, row.image] as const] : []))
     );
-    this.cached = Object.fromEntries(
-      Object.entries(COINGECKO_COIN_IDS).flatMap(([symbol, id]) => {
-        const image = iconById.get(id);
-        return image ? [[symbol, image]] : [];
-      })
-    );
+    this.cached = {
+      ...FORGE_STOCK_ICONS,
+      ...Object.fromEntries(
+        Object.entries(COINGECKO_COIN_IDS).flatMap(([symbol, id]) => {
+          const image = iconById.get(id);
+          return image ? [[symbol, image]] : [];
+        })
+      )
+    };
     this.expiresAt = Date.now() + CACHE_TTL_MS;
     return this.cached;
   }

@@ -13,7 +13,7 @@ import {
 import { AssetMark } from "./AssetMark";
 import { ArrowRight, Check, Close, Shield } from "./Icons";
 
-const MIN_SIGNING_WINDOW_MS = 30_000;
+const MIN_SIGNING_WINDOW_MS = 10_000;
 
 export function ReviewScreen({
   session,
@@ -27,6 +27,7 @@ export function ReviewScreen({
   onSessionExpired,
   onStartAnotherBasket,
   ticketSizeUsd,
+  periodLimitUsd,
   wallet,
   smartWalletReady
 }: {
@@ -41,6 +42,7 @@ export function ReviewScreen({
   onSessionExpired: () => Promise<{ sessionId: string; assetIds: string[] }>;
   onStartAnotherBasket: () => void;
   ticketSizeUsd: number;
+  periodLimitUsd: number;
   wallet: string;
   smartWalletReady: boolean;
 }) {
@@ -320,7 +322,7 @@ export function ReviewScreen({
     return (
       <main className="loading-state review-preparing" aria-live="polite" aria-busy="true">
         <span />
-        <h1>Preparing transaction…</h1>
+        <h1>Preparing your basket…</h1>
       </main>
     );
   }
@@ -330,7 +332,11 @@ export function ReviewScreen({
       <section className="review-ledger">
         <header>
           <h1>Review your basket</h1>
-          <p>Fresh quotes are required before your wallet can confirm.</p>
+          <p>
+            {activeRecord?.walletCalls?.length
+              ? "Fresh quotes are required before your wallet can confirm."
+              : "Demo quotes are ready for a simulated confirmation."}
+          </p>
         </header>
         <div className="ledger-table">
           <div className="ledger-row ledger-labels">
@@ -352,14 +358,14 @@ export function ReviewScreen({
         </div>
         <div className="ledger-totals">
           <div><span>Total input</span><strong>{formatTicketSizeUsd(total)} USDG</strong><small>to invest</small></div>
-          <div><span>Remainder</span><strong>{formatTicketSizeUsd(Math.round((100 - total) * 100) / 100)} USDG</strong><small>stays in your wallet</small></div>
+          <div><span>Remainder</span><strong>{formatTicketSizeUsd(Math.round((periodLimitUsd - total) * 100) / 100)} USDG</strong><small>stays in your wallet</small></div>
         </div>
       </section>
 
       <aside className="policy-rail">
         <h2>Policy checks</h2>
         {[
-          { label: "Budget within limit", value: `${formatTicketSizeUsd(total)} / 100 USDG`, ok: selected.length > 0 },
+          { label: "Budget within limit", value: `${formatTicketSizeUsd(total)} / ${formatTicketSizeUsd(periodLimitUsd)} USDG`, ok: selected.length > 0 },
           {
             label: "Assets eligible",
             value: selected.length ? `${selected.length} / ${selected.length}` : "No assets selected",
@@ -367,9 +373,15 @@ export function ReviewScreen({
           },
           { label: "Robinhood Chain · 4663", value: "Connected", ok: true },
           {
-            label: "Atomic Investmade Wallet",
-            value: smartWalletReady ? "Ready" : "Activation required",
-            ok: smartWalletReady
+            label: activeRecord?.walletCalls?.length
+              ? "Atomic Investmade Wallet"
+              : "Demo execution",
+            value: activeRecord?.walletCalls?.length
+              ? smartWalletReady
+                ? "Ready"
+                : "Activation required"
+              : "Simulated",
+            ok: activeRecord?.walletCalls?.length ? smartWalletReady : true
           },
           {
             label: quotesSafeToSign
@@ -386,12 +398,21 @@ export function ReviewScreen({
           <div className="policy-row" key={label}><span className={ok ? "check-circle" : "check-circle warning-circle"}>{ok ? <Check /> : "!"}</span><b>{label}</b><em>{value}</em></div>
         ))}
         <div className="proof-block">
-          <h3>Private ranking {feed.proof.teeVerified ? "verified" : "demo-only"}</h3>
-          <p><span>0G model</span><b>{feed.proof.model}</b></p>
+          <h3>{feed.proof.teeVerified ? "0G Private Allocation Jury" : "Private ranking demo"}</h3>
+          <p><span>Ranking model</span><b>{feed.proof.model}</b></p>
+          <p><span>Provider</span><b>{feed.proof.teeVerified ? shortHash(feed.proof.provider) : "Local fixture"}</b></p>
           <p><span>Input commitment</span><b>{shortHash(feed.proof.inputCommitment)}</b></p>
+          <p><span>Output commitment</span><b>{shortHash(feed.proof.outputCommitment)}</b></p>
           <p><span>TEE verified</span><b>{feed.proof.teeVerified ? "Verified" : "Not available in demo"}</b></p>
         </div>
-        <div className="wallet-boundary"><Shield /><p><b>One click · all-or-nothing.</b><br />The complete call set is simulated, signed once, and submitted as one atomic basket.</p></div>
+        <div className="wallet-boundary">
+          <Shield />
+          {activeRecord?.walletCalls?.length ? (
+            <p><b>One confirmation · all-or-nothing.</b><br />The complete call set is simulated, signed once, and submitted as one atomic basket.</p>
+          ) : (
+            <p><b>Demo only · no broadcast.</b><br />This simulates basket confirmation and settlement without moving funds.</p>
+          )}
+        </div>
         {error && <p className="error-message" role="alert">{error}</p>}
         {executionConflict ? (
           <button type="button" className="button button-outline" onClick={onStartAnotherBasket}>
@@ -437,7 +458,10 @@ export function ReviewScreen({
 
       <section className="execution-strip">
         <h2>Execution progress</h2>
-        {["Awaiting signature", "Submitted", "Settled"].map((step, index) => {
+        {(activeRecord?.walletCalls?.length
+          ? ["Awaiting signature", "Submitted", "Settled"]
+          : ["Ready", "Simulated", "Complete"]
+        ).map((step, index) => {
           const active = activeRecord ? (activeRecord.status === "SETTLED" ? index <= 2 : index === 0) : index === 0;
           return <div className={active ? "execution-step active" : "execution-step"} key={step}><span>{active ? <Check /> : index + 1}</span><b>{step}</b></div>;
         })}

@@ -2,11 +2,11 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { DemoProvider } from "../src/server/adapters/demo.js";
 import type { CandidateProvider } from "../src/server/adapters/types.js";
-import { createApp } from "../src/server/app.js";
+import { createApp, type AppDependencies } from "../src/server/app.js";
 import { loadConfig } from "../src/server/config.js";
 import { MemoryStateStore } from "../src/server/store.js";
 
-function testApp() {
+function testApp(history?: AppDependencies["history"]) {
 	const provider = new DemoProvider();
 	return createApp({
 		config: loadConfig({
@@ -21,6 +21,7 @@ function testApp() {
 		candidates: provider,
 		inference: provider,
 		execution: provider,
+		history,
 	});
 }
 
@@ -38,6 +39,23 @@ describe("core API flow", () => {
 			.get("/api/assets/icons")
 			.expect(200);
 		expect(response.body).toEqual({ icons: {} });
+	});
+
+	it("returns demo history without calling Substreams", async () => {
+		let calls = 0;
+		const history = {
+			history: async () => {
+				calls += 1;
+				return [];
+			},
+		} as unknown as AppDependencies["history"];
+		const response = await request(testApp(history))
+			.get("/api/assets/rh%3A4663%3AWETH/history")
+			.expect(200);
+
+		expect(calls).toBe(0);
+		expect(response.body).toMatchObject({ period: "1M", source: "demo" });
+		expect(response.body.points).toHaveLength(31);
 	});
 
 	it("opens repeatable demo baskets, generates a bounded feed, and reserves execution once", async () => {
@@ -154,6 +172,45 @@ describe("core API flow", () => {
 			.expect(200);
 		expect(prepared.body.plan.totalInputBaseUnits).toBe("10000000");
 		expect(prepared.body.plan.quotes[0].amountInBaseUnits).toBe("10000000");
+	});
+
+	it("shows community pool tokens only in degen mode", async () => {
+		const app = testApp();
+		const safeSession = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "daily" })
+			.expect(200);
+		const safeFeed = await request(app)
+			.post(`/api/sessions/${safeSession.body.id}/feed`)
+			.send({
+				...onboardingPreferences,
+				assetClasses: ["CRYPTO"],
+				candidateLimit: 2,
+			})
+			.expect(200);
+		expect(safeFeed.body.candidates.map((candidate: { symbol: string }) => candidate.symbol)).toEqual([
+			"WETH",
+		]);
+
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "daily" })
+			.expect(200);
+
+		const feed = await request(app)
+			.post(`/api/sessions/${opened.body.id}/feed`)
+			.send({
+				...onboardingPreferences,
+				riskMode: "degen",
+				assetClasses: ["CRYPTO"],
+				candidateLimit: 2,
+			})
+			.expect(200);
+
+		expect(feed.body.candidates.map((candidate: { symbol: string }) => candidate.symbol)).toEqual([
+			"STEEL",
+			"YOINK",
+		]);
 	});
 
 	it("stops candidate work at the requested feed size", async () => {

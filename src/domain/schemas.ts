@@ -3,7 +3,6 @@ import {
   POLICY_VERSION,
   ROBINHOOD_CHAIN_ID,
   DEFAULT_SLOT_BUDGET,
-  PERIOD_BUDGET,
   USDG_ADDRESS,
   USDG_DECIMALS
 } from "./constants.js";
@@ -11,6 +10,8 @@ import {
 export const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 export const baseUnitsSchema = z.string().regex(/^[0-9]+$/);
 export const MIN_TICKET_SIZE_USD = 0.1;
+export const MIN_PERIOD_LIMIT_USD = 10;
+export const MAX_PERIOD_LIMIT_USD = 100;
 export const TICKET_SIZE_INCREMENT_USD = 0.01;
 export const TICKET_SIZE_INCREMENT_BASE_UNITS = 10_000n;
 
@@ -20,6 +21,16 @@ export function isTicketSizeUsd(value: number): boolean {
     Number.isFinite(value) &&
     value >= MIN_TICKET_SIZE_USD &&
     value <= 100 &&
+    Math.abs(cents - Math.round(cents)) < 1e-8
+  );
+}
+
+export function isPeriodLimitUsd(value: number): boolean {
+  const cents = value * 100;
+  return (
+    Number.isFinite(value) &&
+    value >= MIN_PERIOD_LIMIT_USD &&
+    value <= MAX_PERIOD_LIMIT_USD &&
     Math.abs(cents - Math.round(cents)) < 1e-8
   );
 }
@@ -65,6 +76,9 @@ export const candidateSchema = z.object({
 
 export const personalizationPreferencesSchema = z.object({
   cadence: z.enum(["daily", "weekly", "monthly"]),
+  periodLimitUsd: z.number().refine(isPeriodLimitUsd, {
+    message: "Period limit must be from $10.00 to $100.00 in $0.01 increments."
+  }).optional(),
   ticketSizeUsd: z.number().refine(isTicketSizeUsd, {
     message: "Ticket size must be from $0.10 to $100.00 in $0.01 increments."
   }),
@@ -152,12 +166,14 @@ export type FeedOutput = z.infer<typeof feedOutputSchema>;
 export type ExecutionRequest = z.infer<typeof executionRequestSchema>;
 export type ExecutionPlan = z.infer<typeof executionPlanSchema>;
 
-export function budgetForTicket(ticketSizeUsd: number) {
+export function budgetForTicket(ticketSizeUsd: number, periodLimitUsd = 100) {
   const slotBudget = ticketSizeToBaseUnits(ticketSizeUsd);
+  const periodBudget = ticketSizeToBaseUnits(periodLimitUsd);
+  if (slotBudget > periodBudget) throw new Error("TICKET_EXCEEDS_PERIOD_LIMIT");
   return {
-    periodBudgetBaseUnits: PERIOD_BUDGET.toString(),
+    periodBudgetBaseUnits: periodBudget.toString(),
     slotBudgetBaseUnits: slotBudget.toString(),
-    maxCards: Number(PERIOD_BUDGET / slotBudget)
+    maxCards: Number(periodBudget / slotBudget)
   };
 }
 

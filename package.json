@@ -20,10 +20,14 @@
     "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^1.7.2",
+    "@connectrpc/connect": "^1.3.0",
+    "@connectrpc/connect-node": "^1.3.0",
     "@fontsource/archivo-black": "^5.2.6",
     "@fontsource/dm-sans": "^5.2.6",
     "@privy-io/node": "0.27.0",
     "@privy-io/react-auth": "3.35.2",
+    "@substreams/core": "^0.17.0",
     "@types/canvas-confetti": "^1.9.0",
     "@worldcoin/idkit-core": "^4.0.11",
     "canvas-confetti": "^1.9.4",
