@@ -2,10 +2,19 @@
 
 > **Private Market Pulse — a private AI-generated stocks and crypto feed with user-controlled execution**
 
-**Document status:** hackathon product and implementation brief
+**Document status:** historical hackathon product and implementation brief with a current-state overlay
 **Research date:** 25 July 2026
 **Event:** [ETHGlobal Lisbon 2026 prize and resource hub](https://ethglobal.com/events/lisbon2026/prizes)
 **Build assumption:** two people, roughly 20 focused build hours, Classic/from-scratch submission, and no more than three partner submissions
+
+> **Current implementation notice (26 July 2026):** this long-form document preserves research,
+> sponsor options, and rejected/future designs. It is not a line-by-line description of the current
+> app. Use [README.md](./README.md), [docs/USER_FLOW.md](./docs/USER_FLOW.md), and
+> [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for runtime truth. In particular, the current code
+> uses Privy rather than SIWE as its authentication boundary, makes World optional, has no AgentKit
+> or autonomous-mandate endpoint, has no separate stock-eligibility service, uses configurable
+> period/ticket amounts, executes live buys atomically through the Investmade smart wallet, and
+> executes position exits sequentially through the connected wallet.
 
 ---
 
@@ -24,18 +33,21 @@ The feed changes with market conditions:
 - Existing portfolio positions, recent price movement, live liquidity, and verified-human crowd preferences influence card ranking.
 - The model explains why each card appears, but deterministic application rules—not the model—enforce budgets, asset eligibility, quote freshness, slippage, and execution limits.
 
-The core product is **user-confirmed**, not autonomous:
+The implemented product is **user-confirmed**, not autonomous:
 
-1. A wallet authenticates.
-2. World verifies that a unique human controls the account.
-3. investmade.fun opens one weekly session.
-4. 0G privately generates a personalized, structured card feed.
-5. The user swipes and reviews the basket.
-6. Uniswap builds executable routes.
-7. The user confirms the wallet request.
-8. investmade.fun records settlement receipts.
+1. The user answers five plan questions.
+2. Privy authenticates the user and activates the canonical Investmade smart wallet.
+3. World verifies the user only when the deployment has a complete World configuration.
+4. investmade.fun opens a daily, weekly, or monthly cadence session.
+5. 0G privately ranks a bounded executable candidate set in production.
+6. The user skips/adds cards and reviews the basket.
+7. Uniswap returns fresh approvals, Permit2 calls, and exact-input swap calldata.
+8. The Investmade smart wallet preflights and submits one atomic buy operation after one user confirmation.
+9. investmade.fun reconciles the exact USDG spend and output transfers before showing terminal settlement.
 
-An optional “degen” mode can let a World human-backed agent prepare or execute a weekly basket, but only after a separate, tightly bounded wallet mandate exists. A World proof by itself never grants authority to move money.
+The World AgentKit and autonomous “degen agent” paths described later are preserved hackathon
+options, not implemented current flows. Degen mode currently affects ranking/community-asset
+discovery only; it never grants execution authority.
 
 ### Recommended three partner submissions
 
@@ -109,7 +121,11 @@ USDC bridging or conversion is out of scope unless an exact live route is verifi
 
 ### 3.2 Canonical Robinhood Chain assets
 
-Use the canonical Robinhood symbols and contract registry. Do not use invented names such as `AAPLX`, `APPLEX`, `TSLAX`, or `TESLAX`. The stock registry is sourced from Uniswap’s Robinhood Stocks list; the local demo feed contains ten cards: WETH plus the first nine listed stock tokens. Every live card’s displayed unit price is derived from its exact USDG-to-asset Uniswap quote.
+Use the canonical Robinhood symbols and contract registry. Do not use invented names such as
+`AAPLX`, `APPLEX`, `TSLAX`, or `TESLAX`. The current candidate universe contains WETH, Uniswap’s
+Robinhood stock-token list, and opt-in Degen community assets. Discovery returns pages of up to ten
+unique executable candidates rather than a fixed ten-token feed. Every live card’s displayed unit
+price is derived from its exact USDG-to-asset Uniswap quote.
 
 Live registry examples checked on 25 July 2026:
 
@@ -128,7 +144,6 @@ investmade.fun must build cards from this intersection:
 
 ```text
 canonical asset registry
-∩ user eligibility
 ∩ token permission checks
 ∩ healthy market/oracle state
 ∩ live exact-size Uniswap quote
@@ -148,15 +163,19 @@ Standard-EOA sequential execution is deliberately not a live-buy fallback. Exter
 Rainbow can authenticate and fund the Investmade Wallet, but they do not execute independent basket
 legs.
 
-### 3.5 World ID is verification, not login or spend authority
+### 3.5 Privy is authentication; World is optional verification
 
-Authenticate the wallet with SIWE first, then bind a World proof to that authenticated account. World’s proof establishes uniqueness/humanness. It does not approve USDG, sign Uniswap transactions, or create a weekly trading mandate.
+The current code authenticates with a short-lived Privy access token and verifies that the canonical
+Investmade smart-wallet address belongs to that Privy user. When all World RP/app values are
+configured, a World proof is additionally bound to the authenticated wallet and becomes a feed
+gate. World is otherwise absent from the user flow. It never approves USDG, signs Uniswap
+transactions, or creates a trading mandate.
 
 ---
 
 ## 4. Product principles
 
-1. **Fixed downside boundary:** each weekly session has an immutable maximum spend.
+1. **Fixed downside boundary:** each daily, weekly, or monthly cadence session has a user-selected maximum spend.
 2. **User control by default:** the user makes the final allocation and signs execution.
 3. **AI proposes, code constrains:** the model ranks only supplied candidates; it never invents token addresses or calldata.
 4. **Executable cards only:** every visible buy card has recently passed a live quote gate.
@@ -169,9 +188,28 @@ Authenticate the wallet with SIWE first, then bind a World proof to that authent
 
 ---
 
-## 5. Core user flows
+## 5. Core user flow
 
-### 5.1 Onboarding
+The implemented flow is:
+
+1. Answer cadence, period-limit, ticket-size, risk, and asset-mix questions.
+2. Accept the disclosure and connect with Privy.
+3. Create/activate the embedded signer and Investmade smart wallet on chain `4663`.
+4. Complete World verification only when the deployment enables the optional World gate.
+5. Open a cadence-bound session and request an executable feed page.
+6. Skip/add cards without moving funds; paginate while preserving selected assets.
+7. Review the basket and refresh every selected route.
+8. Preflight and sign one atomic smart-wallet buy operation.
+9. Reconcile the submitted receipt and exact output transfers.
+10. View Activity/Portfolio, or prepare fresh sequential wallet-confirmed exits.
+
+The authoritative screen-by-screen version is [docs/USER_FLOW.md](./docs/USER_FLOW.md).
+
+> The detailed subsections below preserve the original hackathon design. Fixed `100/10 USDG`,
+> mandatory World, CrowdScore, AgentKit, SIWE, and atomic Sell All statements are historical unless
+> they also appear in the current user-flow document.
+
+### 5.1 Historical onboarding design
 
 1. User selects an investment frequency: every day, every week, or every month.
 2. User selects a ticket size: 2 USDG, 10 USDG, 25 USDG, or another whole USDG amount from 1 to 100.
@@ -195,7 +233,7 @@ determines exact quote and allocation amounts; allowed asset classes filter the 
 candidate set before private inference. World verification should be a one-time onboarding action
 with optional continuity checks, not a replacement for Privy wallet authentication.
 
-### 5.2 Configure the investment plan
+### 5.2 Historical investment-plan design
 
 The user selects:
 
@@ -225,7 +263,7 @@ maximum accepted cards = 10
 
 Unspent slots remain USDG.
 
-### 5.3 Open the weekly session
+### 5.3 Historical weekly-session design
 
 When the weekly window opens:
 
@@ -241,7 +279,7 @@ When the weekly window opens:
 
 The user cannot start a second session for the same epoch.
 
-### 5.4 Swipe
+### 5.4 Historical swipe design
 
 Each card shows:
 
@@ -264,7 +302,7 @@ Actions:
 
 The swipe itself does not move funds.
 
-### 5.5 Review and execute
+### 5.5 Historical review and execution design
 
 The review screen displays:
 
@@ -295,7 +333,7 @@ Execution modes:
 
 After broadcast, investmade.fun waits for terminal chain/order status. An API response or transaction hash alone is not settlement proof.
 
-### 5.6 Between weekly sessions
+### 5.6 Historical between-session design
 
 New investmade.fun buys are disabled between sessions. The user can still:
 
@@ -308,7 +346,7 @@ New investmade.fun buys are disabled between sessions. The user can still:
 
 This is an application rule, not a claim that tokens are technically non-transferable outside investmade.fun.
 
-### 5.7 Exit positions and Sell All
+### 5.7 Historical exit and Sell All design
 
 The core MVP always exposes **Exit position** for each supported holding. The workflow is always reachable, but settlement is best-effort and can be blocked by permissioning, halts, transfer restrictions, or liquidity. **Sell All** is enabled only when every non-dust position has a valid exit path.
 
@@ -324,7 +362,7 @@ The core MVP always exposes **Exit position** for each supported holding. The wo
 
 Never label a partial exit “Sell All complete.”
 
-### 5.8 World submission path: human-backed agent mode
+### 5.8 Historical World submission path: human-backed agent mode
 
 If World is one of the selected three partners, the AgentKit authorization path is core to the submission. Fully autonomous onchain spending remains optional and separated from the user-confirmed MVP.
 
@@ -345,7 +383,10 @@ Plan generation does not consume the weekly execution nonce. The nonce is reserv
 
 ---
 
-## 6. System architecture
+## 6. Historical proposed architecture
+
+This section is the pre-build architecture proposal. The implemented architecture is documented in
+[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 ```mermaid
 flowchart LR
@@ -397,7 +438,11 @@ All sponsor and RPC keys remain server-side.
 
 ---
 
-## 7. Session state machine
+## 7. Historical proposed session state machine
+
+The current buy path submits one atomic operation and therefore normally reaches `SETTLED` or
+`FAILED`; `PARTIAL` remains only for legacy/non-atomic records. Demo and local-live sessions are
+nonce-suffixed and repeatable, while production uses the cadence epoch as the persistent boundary.
 
 ```mermaid
 stateDiagram-v2

@@ -1,37 +1,59 @@
 # investmade.fun
 
-investmade.fun is a non-custodial, fixed-budget allocation app for Robinhood Chain. Users choose a daily, weekly, or monthly cadence and a per-card ticket size. A private 0G model ranks only canonical assets that already passed deterministic eligibility, market-state, permission, and exact-size Uniswap quote gates. The user chooses cards, reviews a bounded basket, and confirms every wallet call.
+investmade.fun is a non-custodial, fixed-budget allocation app for Robinhood Chain. A user sets a daily, weekly, or monthly spending limit, chooses the USDG amount represented by each decision, receives a ranked feed of executable crypto and tokenized-stock routes, builds a basket, and explicitly signs the complete basket.
 
-This repository implements the core MVP described in [investmade_fun.md](./investmade_fun.md). Autonomous mandates and AgentKit execution are intentionally excluded from the core path.
+The current product is user-controlled. It does not hold funds, run an autonomous mandate, or let an AI sign transactions. The backend ranks and validates; the Privy smart wallet signs and broadcasts.
 
-Privy provides email, external-wallet, embedded-wallet, and ERC-4337 smart-wallet support. Every
-user gets an embedded signer and a canonical Investmade smart wallet. The browser sends a
-short-lived Privy access token with that smart-wallet address; the server verifies the token and
-confirms the smart wallet belongs to the authenticated Privy user before accepting live requests.
-`PRIVY_APP_SECRET` is server-only and must never be exposed through a Vite-prefixed variable.
+## Current status
 
-## What is implemented
+The repository currently implements:
 
-- React/Vite product UI: onboarding, swipe feed, budget rail, review, explicit wallet confirmation, positions, and terminal receipts.
-- Privy access-token authentication with server-side embedded/smart-wallet verification.
-- One atomic ERC-4337 basket operation: allowance reset/approval, Permit2 setup, and all Uniswap
-  swaps are simulated and confirmed together. A failed leg reverts the complete basket.
-- First-time, five-question onboarding for cadence, ticket size, risk mode, asset mix, and explicit product-risk acknowledgement; preferences determine session epochs, quote amounts, policy limits, the server-side candidate set, and private-ranking input.
-- Privy wallet authentication is the default production identity boundary. World ID is optional and is only enabled when its three World environment variables are configured.
-- Canonical Robinhood Chain registry sourced from Uniswap’s Robinhood Stocks list: WETH plus 15 tokenized stock assets; the ten-card feed uses WETH and the first nine listed stocks.
-- Each live card displays a USD unit price derived from its fresh server-side Uniswap exact-input quote.
-- Live Robinhood asset/price/contract/oracle-pause checks.
-- Live Uniswap permission checks plus Robinhood asset/price/contract/oracle checks for stock-token routes.
-- Live Uniswap permission, approval, exact-input quote, and swap-calldata construction.
-- Strict 0G private/TeeML call with `verify_tee: true`; an unverified response is rejected.
-- Exact `bigint` USDG arithmetic, input/output commitments, deterministic policy, quote freshness, price-impact caps, and one execution per wallet/epoch.
-- Route-independent authorized intent hash plus exact calldata commitments.
-- PostgreSQL uniqueness and transaction boundaries for weekly sessions and executions.
-- Submitted-transaction reconciliation against the authenticated wallet, expected calldata, Robinhood Chain, terminal receipt status, and output-token transfers to the wallet.
-- Always-reachable per-position exit preparation using current wallet balances, stock permissions, token approvals, fresh reverse Uniswap quotes, and explicit wallet confirmation.
-- Local demo mode with visibly non-mainnet fixtures. Demo evidence never claims TEE or chain settlement.
+- A React/Vite frontend with onboarding, Basket, Portfolio, Activity, Account, and wallet-management surfaces.
+- Privy login, an embedded signer, and a canonical ERC-4337 Investmade Wallet on Robinhood Chain (`4663`).
+- Five-question onboarding for cadence, period limit, ticket size, risk preference, and asset mix, followed by a risk acknowledgement.
+- Account-scoped preference persistence. Returning authenticated users reuse their saved plan until they change it.
+- Canonical WETH, Robinhood stock-token, and opt-in Degen community registries.
+- Live Robinhood contract, asset-status, price/halt, and oracle-pause checks for stock tokens.
+- Per-wallet Uniswap permission checks and exact-input USDG quotes before a route can enter the live feed.
+- Ten-candidate feed pages with additional pages loaded as the user approaches the end of the current page.
+- Deterministic budget, asset, quote-freshness, price-impact, and plan-hash validation around the ranking model.
+- Private 0G inference in production. Demo and local-live modes can use local ranking evidence when no 0G key is supplied.
+- One atomic live buy operation containing the required approval, Permit2, and swap calls.
+- Submitted-operation reconciliation against the actual USDG spend and output-token transfers.
+- Portfolio balances, optional one-month Graph/Substreams history, per-position exits, and sequential “Exit all” wallet confirmations.
+- PostgreSQL state in production and in-memory state in demo/local-live modes.
+- Optional World ID verification. It becomes a feed gate only when all three World configuration values are present.
 
-## Local demo
+The original hackathon research and implementation brief remains in [investmade_fun.md](./investmade_fun.md). It contains historical options and sponsor-track ideas; the current runtime source of truth is this README, [docs/USER_FLOW.md](./docs/USER_FLOW.md), [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md), and the code.
+
+## Real user flow
+
+1. The user opens the landing page and answers five questions:
+   cadence, period limit, ticket size, risk preference, and allowed asset classes.
+2. The user reviews the plan, accepts the disclosure, and selects **Save plan & connect**.
+3. Privy authenticates the user, creates an embedded wallet when needed, and activates the Investmade smart wallet for chain `4663`.
+4. If World verification is configured in live mode, the user completes that check. Otherwise the app continues directly.
+5. The backend opens the cadence epoch and generates the first executable feed page.
+6. The user skips or adds cards. Adding a card reserves one ticket inside the selected period limit; it does not move funds.
+7. **Review basket** refreshes the selected routes and displays input, estimated output, minimum output, price impact, remaining budget, quote lifetime, and ranking proof.
+8. For a live basket, the app preflights the complete smart-wallet operation and opens one Privy confirmation. All buy legs succeed together or the complete operation reverts.
+9. The backend stores the submitted operation hash and polls Robinhood Chain until the result is terminal.
+10. Activity displays `SUBMITTED`, `SETTLED`, `PARTIAL`, or `FAILED` evidence. A quote or hash alone is never displayed as settlement.
+11. Portfolio reads supported balances and can prepare fresh asset-to-USDG exits. Exit calls are signed by the connected wallet one transaction at a time; **Exit all** repeats that flow sequentially for each holding.
+
+See [docs/USER_FLOW.md](./docs/USER_FLOW.md) for screen states, recovery paths, and mode-specific differences.
+
+## Runtime modes
+
+| Mode | Configuration | State and ranking | Market and execution behavior |
+|---|---|---|---|
+| Demo | `INVESTMADE_DEMO_MODE=true`, `LOCAL_LIVE_EXECUTION=false` | In-memory sessions; fixture candidates and local ranking unless a 0G key is supplied | Simulated basket and settlement; no broadcast |
+| Local live | `INVESTMADE_DEMO_MODE=true`, `LOCAL_LIVE_EXECUTION=true` | In-memory, repeatable cadence sessions; live candidates; local or 0G ranking | Real Uniswap quotes and real wallet signing; prohibited with `NODE_ENV=production` |
+| Production | `INVESTMADE_DEMO_MODE=false` | PostgreSQL; one session/execution boundary per wallet and cadence epoch; verified 0G ranking | Live Robinhood/Uniswap checks, atomic buy submission, and onchain reconciliation |
+
+`GET /api/config` and `GET /api/health` expose the active public mode. Local and production browser sessions are origin-scoped, so being connected on `localhost` does not authenticate the production domain.
+
+## Run locally
 
 ```bash
 npm ci --cache .npm-cache
@@ -39,9 +61,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Open `http://localhost:5173`. The default demo mode uses deterministic fixtures and never broadcasts.
+Open `http://localhost:5173`. The default `.env.example` configuration is demo mode and never broadcasts.
 
-Verification:
+Run the project checks:
 
 ```bash
 npm run lint
@@ -51,9 +73,31 @@ npm run build
 npm audit --omit=dev
 ```
 
+## Local-live smoke testing
+
+Local-live is for developer-controlled Robinhood Chain testing without production persistence:
+
+```dotenv
+INVESTMADE_DEMO_MODE=true
+LOCAL_LIVE_EXECUTION=true
+UNISWAP_API_KEY=...
+```
+
+Privy authentication and wallet signing are real. Candidate discovery and execution use live Robinhood/Uniswap data, but sessions remain in memory and ranking evidence can remain local. This mode must not run with `NODE_ENV=production`.
+
 ## Production configuration
 
-Set `INVESTMADE_DEMO_MODE=false` and provide every required secret from `.env.example`. Do not put production secrets in browser-prefixed variables.
+Production requires:
+
+- `INVESTMADE_DEMO_MODE=false`
+- `DATABASE_URL`
+- `UNISWAP_API_KEY`
+- `ZG_ROUTER_API_KEY`
+- `PRIVY_APP_ID`
+- `PRIVY_APP_SECRET`
+- a production-length `SESSION_SECRET`
+
+World is optional. It is enabled only when `WORLD_APP_ID`, `WORLD_RP_ID`, and `WORLD_RP_SIGNING_KEY` are all configured. Graph/Substreams history and CoinGecko icons are optional enrichment paths.
 
 ```bash
 npm run db:migrate
@@ -61,61 +105,36 @@ npm run build
 npm start
 ```
 
-Production startup fails when Privy, PostgreSQL, Uniswap, 0G, or session configuration is missing.
+In Privy, enable smart wallets for all users and configure Robinhood Chain `4663` with working bundler/paymaster infrastructure. Use a dedicated production RPC rather than the public Robinhood endpoint for normal traffic.
 
-In the Privy Dashboard, enable smart wallets for all users and configure Robinhood Chain (`4663`)
-as a custom chain with an Alchemy bundler and paymaster. This dashboard step is required before
-`useSmartWallets()` can create a chain-4663 client.
+## Buy execution boundary
 
-The production RPC should be a dedicated provider endpoint. Robinhood’s public endpoint is suitable for development and kill tests, not normal production traffic.
+For each reviewed live basket, the backend:
 
-## Execution boundary
+1. Regenerates selected candidates and requests fresh exact-input Uniswap routes.
+2. Revalidates the exact ticket size, period limit, selected asset IDs, quote freshness, price impact, sender, chain, targets, and calldata.
+3. Returns approval-reset, approval, Permit2, and swap calls plus hashes binding the calls to the authorized plan.
+4. Lets the browser verify that the prepared plan still matches the visible review basket.
+5. Prepares the complete ERC-4337 user operation.
+6. Opens one Privy confirmation and submits one atomic operation.
+7. Reconciles the terminal receipt, exact USDG spend, and output-token transfers.
 
-The app prepares one atomic smart-wallet operation containing:
+An HTTP success, quote response, wallet acknowledgement, or transaction hash is not settlement proof.
 
-1. Optional approval cancellation.
-2. Optional exact required USDG approval.
-3. One fresh Uniswap quote and transaction-calldata request per selected route.
-4. A Permit2 transaction when Uniswap requires one.
-5. One Privy confirmation for the complete call set.
-6. Submission of the single operation transaction hash to the backend.
-7. Terminal receipt reconciliation.
+## Portfolio and exits
 
-The live buy flow rejects sequential submission. It preflights the complete user operation before
-opening Privy, then executes all legs together or reverts them together. A quote, API
-acknowledgement, or transaction hash is still never treated as settlement.
+Portfolio is independent of the buy-session gate:
 
-For successful buy legs, the receipt records the actual output-token amount transferred to the authenticated wallet. A successful transaction receipt with no matching output transfer is not labeled settled.
+- It reads balances for supported candidate assets.
+- It values holdings with the latest candidate unit price.
+- It uses one-month The Graph/Substreams history when enough data exists; otherwise the UI labels history as unavailable.
+- **Get exit quote** requests a fresh exact-input asset-to-USDG route.
+- **Confirm sell** submits each approval/swap call through the connected wallet and waits for its receipt.
+- **Exit all** processes holdings sequentially and may stop after an error. It is not one atomic basket operation.
 
-Position exits are prepared independently of the weekly session gate. The live UI reads the connected wallet balance, requests a fresh exact-input asset→USDG route, and requires the wallet to confirm each returned approval/swap call.
+## Live Uniswap evidence
 
-No server private key exists. The backend cannot broadcast for the user.
-
-## Signing a live Robinhood Chain trade
-
-Live signing is intentionally unavailable while `INVESTMADE_DEMO_MODE=true`. After configuring the
-required production services, run with `INVESTMADE_DEMO_MODE=false`, activate and fund the
-Investmade Wallet, and use **Review and sign → Confirm once**. Privy shows the complete atomic
-basket. investmade.fun stores its single resulting transaction hash and waits for Robinhood Chain
-settlement.
-
-The settlement screen links the atomic operation to Blockscout and marks it settled only after the
-receipt contains the exact USDG spend and every minimum output transfer to the Investmade Wallet. It
-does not label a quote, signature request, or submitted hash as settlement.
-
-For a developer-controlled, single-asset mainnet smoke test without enabling the full production
-stack, set `LOCAL_LIVE_EXECUTION=true` while keeping `INVESTMADE_DEMO_MODE=true`. This mode uses
-real USDG→WETH Uniswap calldata and Privy authentication, but keeps the ranking/session state in
-memory and labels its ranking evidence as a demo. It is intentionally limited to WETH, cannot run
-with `NODE_ENV=production`, and is not a production deployment mode.
-
-The Uniswap route is simulated when prepared, and Privy then prepares the complete ERC-4337 user
-operation before opening the signing modal. This second preflight includes preceding approval and
-Permit2 calls in their real execution order.
-
-## Live integration evidence
-
-On 25 July 2026, the provided Uniswap API credential passed read-only exact-input kill tests on chain `4663`:
+On 25 July 2026, the configured Uniswap credential passed read-only exact-input checks on chain `4663`:
 
 | Route | Permission | Quote | Routing |
 |---|---|---|---|
@@ -123,7 +142,7 @@ On 25 July 2026, the provided Uniswap API credential passed read-only exact-inpu
 | 10 USDG → AAPL | passed | passed | CLASSIC |
 | 10 USDG → TSLA | passed | passed | CLASSIC |
 
-The script records only booleans and route type; it never prints the API key, raw calldata, or full provider response:
+Run the read-only check without printing the API key:
 
 ```bash
 set -a
@@ -132,58 +151,41 @@ set +a
 KILL_TEST_SYMBOL=AAPL npm run verify:uniswap
 ```
 
-No transaction was broadcast during these kill tests.
+The script does not broadcast.
 
-## Uniswap prize verification map
+## Production readiness
 
-Uniswap is the core execution dependency, not an optional integration:
+The codebase contains the production path, but public-mainnet readiness still requires operator evidence:
 
-- [`UniswapProvider.prepare`](./src/server/adapters/uniswap.ts#L9-L58) builds the complete basket
-  from fresh quotes, Permit2 calls, approvals, and swap transactions.
-- [`UniswapProvider.prepareExit`](./src/server/adapters/uniswap.ts#L60-L103) prepares fresh
-  asset-to-USDG exit routes.
-- [`UniswapProvider.permissionAllowed`](./src/server/adapters/uniswap.ts#L105-L119) checks whether
-  the authenticated wallet may trade a tokenized stock.
-- [`UniswapProvider.quotePairRaw`](./src/server/adapters/uniswap.ts#L148-L191) requests exact-input
-  routes across Uniswap v2, v3, and v4 on Robinhood Chain.
-- [`UniswapProvider.approvalCalls`](./src/server/adapters/uniswap.ts#L223-L258) requests required
-  approval reset and approval transactions.
-- [`UniswapProvider.swap`](./src/server/adapters/uniswap.ts#L260-L279) converts a quote into
-  wallet-ready swap calldata.
-- [`scripts/verify-uniswap.mjs`](./scripts/verify-uniswap.mjs) runs the read-only WETH, AAPL, or
-  TSLA integration kill test without broadcasting a transaction.
-- [`FEEDBACK.md`](./FEEDBACK.md) documents the integration experience and requested API
-  improvements for the Uniswap Developer Feedback Form.
+- A funded Investmade Wallet with ETH gas and USDG.
+- Dedicated production RPC and operational monitoring.
+- A live 0G response with `tee_verified: true`.
+- Successful small atomic buy and supported-position exit tests.
+- World end-to-end verification only if the World gate is enabled.
+- Database backup/restore, alerting, key rotation, incident response, and legal review.
 
-## Production blockers that still require operator credentials/funds
-
-Code completeness is not mainnet readiness. Before public launch, the operator must provide and verify:
-
-- A funded Robinhood Chain wallet with ETH gas and USDG.
-- A dedicated production RPC.
-- A live private 0G model response with `tee_verified: true`.
-- World production RP/app configuration and an end-to-end proof.
-- At least one small user-confirmed settlement and one supported-position exit.
-- Monitoring, alerting, backups, key rotation, and legal review.
-
-See [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md) for the release gate.
+Use [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md) as the release gate.
 
 ## Important files
 
+- `src/client/App.tsx` — top-level UI state and navigation.
+- `src/client/components/Onboarding.tsx` — real onboarding and wallet activation flow.
+- `src/client/components/ReviewScreen.tsx` — quote refresh, review, preflight, signing, and reconciliation.
+- `src/client/components/ReceiptScreen.tsx` — submitted and terminal activity evidence.
+- `src/client/components/PositionsScreen.tsx` — holdings, history, and exit flow.
+- `src/server/bootstrap.ts` — mode-dependent provider and storage wiring.
+- `src/server/app.ts` — API, auth, session, feed, execution, and reconciliation routes.
+- `src/server/adapters/live-candidates.ts` — live registry, state, permission, and quote discovery.
+- `src/server/adapters/uniswap.ts` — permissions, approvals, quotes, and wallet calldata.
+- `src/server/adapters/zero-g.ts` — strict private inference.
 - `src/domain/policy.ts` — deterministic feed and execution rules.
-- `src/server/adapters/live-candidates.ts` — Robinhood/Uniswap quote candidate gate.
-- `src/server/adapters/zero-g.ts` — private verified 0G inference.
-- `src/server/adapters/uniswap.ts` — permission, approval, quote, calldata validation.
-- `src/server/app.ts` — auth, World binding, sessions, execution, reconciliation.
-- `migrations/001_initial.sql` — durable uniqueness and execution constraints.
-- `tests/` — fail-closed, commitment, idempotency, and API flow coverage.
-- `design/` — accepted UI concept references.
+- `migrations/001_initial.sql` — production session and execution constraints.
 
-## Security and privacy
+## Security
 
-See [SECURITY.md](./SECURITY.md). Raw World proofs, nullifiers, wallet signatures, 0G prompts/completions, Permit2 signatures, API keys, and raw private inference are never intentionally logged.
+See [SECURITY.md](./SECURITY.md). Provider credentials, World proof payloads, wallet signatures, Permit2 signatures, and raw private inference must remain out of logs and browser-visible configuration.
 
-## Official references
+## References
 
 - [Uniswap Trading API integration guide](https://developers.uniswap.org/docs/trading/swapping-api/integration-guide)
 - [Robinhood Stock Token APIs](https://docs.robinhood.com/chain/stock-token-apis/)

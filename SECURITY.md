@@ -6,7 +6,7 @@ Only the latest `main` revision is supported. Production must run with `INVESTMA
 
 ## Non-custodial boundary
 
-investmade.fun has no server signing key and cannot broadcast on behalf of a user. World verification proves uniqueness only. It never grants token approval or spending authority.
+investmade.fun has no server signing key and cannot broadcast a buy on behalf of a user. World verification is optional and, when configured, proves uniqueness only. It never grants token approval or spending authority.
 
 Privy access tokens are verified by the backend for live requests, and the requested EVM address
 must be present in the authenticated user's verified linked accounts. `PRIVY_APP_SECRET`,
@@ -21,8 +21,9 @@ must be present in the authenticated user's verified linked accounts. `PRIVY_APP
 - Run `npm audit --omit=dev`, the full CI suite, and the production checklist before release.
 - Do not log request bodies for auth, World, 0G, or execution routes.
 - Never reuse a Permit2 signature or calldata after a quote refresh.
-- Keep stock cards disabled unless both eligibility and live market/permission/quote gates pass.
-- Treat `PARTIAL` and `FAILED` per leg; never relabel them as settled.
+- Keep stock cards disabled unless Robinhood registry/market/oracle checks, wallet permission, and a live exact-size quote pass.
+- Treat the current atomic buy as all-or-nothing. Preserve `PARTIAL` only for legacy/non-atomic records and never relabel `PARTIAL` or `FAILED` as settled.
+- Treat “Exit all” as sequential wallet execution, not an atomic basket; stop and report honestly after the first failed call.
 
 ## Reporting
 
