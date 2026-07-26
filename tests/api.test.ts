@@ -1,5 +1,9 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
+import {
+	fillFeedPage,
+	nextFeedExcludedAssetIds,
+} from "../src/domain/feed-pagination.js";
 import { DemoProvider } from "../src/server/adapters/demo.js";
 import type { CandidateProvider } from "../src/server/adapters/types.js";
 import { createApp, type AppDependencies } from "../src/server/app.js";
@@ -132,6 +136,30 @@ describe("core API flow", () => {
 		);
 	});
 
+	it("enforces the selected DCA budget by total USDG, not asset count", async () => {
+		const app = testApp();
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "daily" })
+			.expect(200);
+
+		await request(app)
+			.post("/api/executions/prepare")
+			.send({
+				sessionId: opened.body.id,
+				chainId: 4663,
+				inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+				periodLimitUsd: 10,
+				selections: [
+					{ assetId: "rh:4663:WETH", amountInBaseUnits: "10000000" },
+					{ assetId: "rh:4663:AAPL", amountInBaseUnits: "10000000" },
+				],
+				slippageBps: 50,
+			})
+			.expect(422)
+			.expect(({ body }) => expect(body.error).toBe("BUDGET_EXCEEDED"));
+	});
+
 	it("filters the feed using validated onboarding preferences", async () => {
 		const app = testApp();
 		const opened = await request(app)
@@ -251,6 +279,21 @@ describe("core API flow", () => {
 		expect(next.body.candidates).toHaveLength(2);
 		expect(next.body.feed.cards).toHaveLength(2);
 		expect(next.body.hasMore).toBe(false);
+		expect(nextFeedExcludedAssetIds(first.body, ["selected"])).toEqual(
+			first.body.candidates.map(
+				(candidate: { assetId: string }) => candidate.assetId,
+			),
+		);
+		expect(nextFeedExcludedAssetIds(next.body, ["selected"])).toEqual([
+			"selected",
+		]);
+		const repeated = fillFeedPage(
+			next.body.candidates as Array<{ assetId: string }>,
+		);
+		expect(repeated).toHaveLength(10);
+		expect(repeated[8]?.assetId).toBe(
+			(next.body.candidates[0] as { assetId: string }).assetId,
+		);
 		expect(
 			new Set([
 				...first.body.candidates.map(

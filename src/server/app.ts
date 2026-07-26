@@ -540,7 +540,10 @@ export function createApp(deps: AppDependencies) {
 					)
 					.toString(),
 				authorizedPlanHash: requestedPlanHash,
-				policyHash: policyHash(slotBudgetBaseUnits ?? "0"),
+			policyHash: policyHash(
+				slotBudgetBaseUnits ?? "0",
+				parsed.periodLimitUsd,
+			),
 				callCommitments: preparation.walletCalls.map((call) =>
 					sha256({
 						kind: call.kind,

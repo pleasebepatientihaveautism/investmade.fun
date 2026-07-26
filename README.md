@@ -21,7 +21,7 @@ confirms the smart wallet belongs to the authenticated Privy user before accepti
 - Canonical Robinhood Chain registry sourced from Uniswap’s Robinhood Stocks list: WETH plus 15 tokenized stock assets; the ten-card feed uses WETH and the first nine listed stocks.
 - Each live card displays a USD unit price derived from its fresh server-side Uniswap exact-input quote.
 - Live Robinhood asset/price/contract/oracle-pause checks.
-- Server-side stock eligibility provider boundary; stock cards fail closed without an affirmative result.
+- Live Uniswap permission checks plus Robinhood asset/price/contract/oracle checks for stock-token routes.
 - Live Uniswap permission, approval, exact-input quote, and swap-calldata construction.
 - Strict 0G private/TeeML call with `verify_tee: true`; an unverified response is rejected.
 - Exact `bigint` USDG arithmetic, input/output commitments, deterministic policy, quote freshness, price-impact caps, and one execution per wallet/epoch.
@@ -61,7 +61,7 @@ npm run build
 npm start
 ```
 
-Production startup fails when Privy, PostgreSQL, Uniswap, 0G, or session configuration is missing. Stock-token cards additionally require `STOCK_ELIGIBILITY_PROVIDER_URL`; without it, they remain hidden.
+Production startup fails when Privy, PostgreSQL, Uniswap, 0G, or session configuration is missing.
 
 In the Privy Dashboard, enable smart wallets for all users and configure Robinhood Chain (`4663`)
 as a custom chain with an Alchemy bundler and paymaster. This dashboard step is required before
@@ -163,7 +163,6 @@ Code completeness is not mainnet readiness. Before public launch, the operator m
 - A dedicated production RPC.
 - A live private 0G model response with `tee_verified: true`.
 - World production RP/app configuration and an end-to-end proof.
-- A real stock eligibility/compliance service if stock cards are enabled.
 - At least one small user-confirmed settlement and one supported-position exit.
 - Monitoring, alerting, backups, key rotation, and legal review.
 
@@ -172,7 +171,7 @@ See [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md) for the relea
 ## Important files
 
 - `src/domain/policy.ts` — deterministic feed and execution rules.
-- `src/server/adapters/live-candidates.ts` — Robinhood/eligibility/quote candidate gate.
+- `src/server/adapters/live-candidates.ts` — Robinhood/Uniswap quote candidate gate.
 - `src/server/adapters/zero-g.ts` — private verified 0G inference.
 - `src/server/adapters/uniswap.ts` — permission, approval, quote, calldata validation.
 - `src/server/app.ts` — auth, World binding, sessions, execution, reconciliation.

@@ -20,6 +20,7 @@ export interface ReviewBasket {
 	epochId: string;
 	selected: Candidate[];
 	ticketSizeUsd: number;
+	periodLimitUsd: number;
 	wallet: string;
 }
 
@@ -29,6 +30,7 @@ export function reviewBasketKey(basket: ReviewBasket) {
 		epochId: basket.epochId,
 		assetIds: basket.selected.map((candidate) => candidate.assetId).sort(),
 		ticketSizeUsd: basket.ticketSizeUsd,
+		periodLimitUsd: basket.periodLimitUsd,
 		wallet: basket.wallet.toLowerCase(),
 	});
 }
@@ -86,6 +88,7 @@ export async function executionPlanHashMatchesReviewBasket(
 		sessionId: basket.sessionId,
 		chainId: 4663,
 		inputToken: USDG_ADDRESS,
+		periodLimitUsd: basket.periodLimitUsd,
 		selections: basket.selected.map((candidate) => ({
 			assetId: candidate.assetId,
 			amountInBaseUnits,

@@ -63,9 +63,10 @@ export function ReviewScreen({
       epochId: session.epochId,
       selected,
       ticketSizeUsd,
+		periodLimitUsd,
       wallet,
     }),
-    [selected, session.epochId, session.id, ticketSizeUsd, wallet],
+    [selected, session.epochId, session.id, ticketSizeUsd, periodLimitUsd, wallet],
   );
   const basketKey = reviewBasketKey(basket);
   const currentBasketKey = useRef(basketKey);
@@ -105,7 +106,8 @@ export function ReviewScreen({
       const prepared = await api.prepareExecution(
         session.id,
         selected.map((item) => item.assetId),
-        ticketSizeUsd
+        ticketSizeUsd,
+        periodLimitUsd,
       );
       if (
         attempt !== preparationAttempt.current ||
@@ -121,7 +123,12 @@ export function ReviewScreen({
       if (code === "SESSION_NOT_FOUND") {
         try {
           const recovered = await onSessionExpired();
-          const prepared = await api.prepareExecution(recovered.sessionId, recovered.assetIds, ticketSizeUsd);
+          const prepared = await api.prepareExecution(
+            recovered.sessionId,
+            recovered.assetIds,
+            ticketSizeUsd,
+            periodLimitUsd,
+          );
           if (attempt !== preparationAttempt.current) return;
           setRecord(prepared);
           setPreparedBasketKey(
@@ -179,6 +186,7 @@ export function ReviewScreen({
     selected,
     session.id,
     ticketSizeUsd,
+		periodLimitUsd,
   ]);
 
   useEffect(() => {
@@ -404,6 +412,16 @@ export function ReviewScreen({
           <p><span>Input commitment</span><b>{shortHash(feed.proof.inputCommitment)}</b></p>
           <p><span>Output commitment</span><b>{shortHash(feed.proof.outputCommitment)}</b></p>
           <p><span>TEE verified</span><b>{feed.proof.teeVerified ? "Verified" : "Not available in demo"}</b></p>
+          {feed.proof.teeVerified ? (
+            <div className="proof-links">
+              <a href={zeroGProviderUrl(feed.proof.provider)} target="_blank" rel="noreferrer">
+                View TEE provider on 0G Explorer ↗
+              </a>
+              <a href="https://0g.ai/product" target="_blank" rel="noreferrer">
+                How 0G private inference works ↗
+              </a>
+            </div>
+          ) : null}
         </div>
         <div className="wallet-boundary">
           <Shield />
@@ -468,6 +486,10 @@ export function ReviewScreen({
       </section>
     </main>
   );
+}
+
+function zeroGProviderUrl(provider: string) {
+  return `https://explorer.0g.ai/mainnet/blockchain/accounts/${encodeURIComponent(provider)}`;
 }
 
 function smartWalletCall(call: WalletCall): { to: Address; data: Hex; value: bigint } {

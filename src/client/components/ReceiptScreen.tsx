@@ -107,6 +107,16 @@ export function ReceiptScreen({
         <p><Shield /><span>Authorized plan<b>{shortHash(record.plan.authorizedPlanHash)}</b></span></p>
         <p><Shield /><span>Policy hash<b>{shortHash(record.plan.policyHash)}</b></span></p>
         <p><Shield /><span>{demoMode ? "Ranking output" : "0G output"}<b>{feed ? shortHash(feed.proof.outputCommitment) : "Feed snapshot unavailable"}</b></span></p>
+        {!demoMode && feed?.proof.teeVerified ? (
+          <div className="receipt-proof-links">
+            <a href={zeroGProviderUrl(feed.proof.provider)} target="_blank" rel="noreferrer">
+              View TEE provider on 0G Explorer ↗
+            </a>
+            <a href="https://0g.ai/product" target="_blank" rel="noreferrer">
+              About 0G private inference ↗
+            </a>
+          </div>
+        ) : null}
         <p><Shield /><span>{isTerminal ? "Terminal outcome" : "Onchain status"}<b>{record.status}</b></span></p>
         <div className={demoMode ? "demo-disclosure" : "live-disclosure"}>
           {demoMode
@@ -138,6 +148,10 @@ function receiptCopy(status: ExecutionRecord["status"], totalLegs: number, succe
 
 function explorerUrl(hash: string) {
   return `https://robinhoodchain.blockscout.com/tx/${hash}`;
+}
+
+function zeroGProviderUrl(provider: string) {
+  return `https://explorer.0g.ai/mainnet/blockchain/accounts/${encodeURIComponent(provider)}`;
 }
 
 function shortHash(hash: string) {

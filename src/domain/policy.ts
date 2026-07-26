@@ -2,7 +2,6 @@ import {
 	ASSET_REGISTRY,
 	MAX_DEGEN_PRICE_IMPACT_BPS,
 	MAX_PRICE_IMPACT_BPS,
-  PERIOD_BUDGET,
   POLICY_VERSION,
 	QUOTE_TTL_SECONDS
 } from "./constants.js";
@@ -116,9 +115,10 @@ export function validateExecutionAssets(
   const seen = new Set<string>();
   let total = 0n;
   const slot = BigInt(request.selections[0]?.amountInBaseUnits ?? "0");
+  const periodBudget = ticketSizeToBaseUnits(request.periodLimitUsd);
   const minTicket = ticketSizeToBaseUnits(0.1);
   const increment = TICKET_SIZE_INCREMENT_BASE_UNITS;
-  if (slot < minTicket || slot > PERIOD_BUDGET || slot % increment !== 0n) {
+  if (slot < minTicket || slot > periodBudget || slot % increment !== 0n) {
     throw new PolicyError("INVALID_SLOT_SIZE", "Ticket size must be from 0.10 to 100.00 USDG in 0.01 increments.");
   }
 
@@ -145,18 +145,22 @@ export function validateExecutionAssets(
     total += BigInt(selection.amountInBaseUnits);
   }
 
-  if (total > PERIOD_BUDGET) {
+  if (total > periodBudget) {
     throw new PolicyError("BUDGET_EXCEEDED", "Execution exceeds the period budget.");
   }
 }
 
-export function policyHash(slotBudgetBaseUnits: string): `sha256:${string}` {
+export function policyHash(
+  slotBudgetBaseUnits: string,
+  periodLimitUsd: number,
+): `sha256:${string}` {
   const slotBudget = BigInt(slotBudgetBaseUnits);
+  const periodBudget = ticketSizeToBaseUnits(periodLimitUsd);
   return sha256({
     policyVersion: POLICY_VERSION,
-    periodBudget: PERIOD_BUDGET.toString(),
+    periodBudget: periodBudget.toString(),
     slotBudget: slotBudgetBaseUnits,
-    maxCards: slotBudget > 0n ? Number(PERIOD_BUDGET / slotBudget) : 0,
+    maxCards: slotBudget > 0n ? Number(periodBudget / slotBudget) : 0,
     maxPriceImpactBps: MAX_PRICE_IMPACT_BPS
   });
 }

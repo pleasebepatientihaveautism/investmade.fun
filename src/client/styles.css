@@ -623,7 +623,7 @@ button:focus-visible { outline: 3px solid rgba(18, 71, 232, 0.35); outline-offse
 .feed-method-copy { flex: 1; max-width: 940px; }
 .evidence-detail h2 { margin: 0 0 3px; font-size: 20px; }
 .evidence-detail p { margin: 0; color: var(--muted); font-size: 12px; }
-.feed-pipeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 16px 0 0; padding: 0; list-style: none; }
+.feed-pipeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 14px 0 0; padding: 0; list-style: none; }
 .feed-pipeline li { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding-left: 12px; border-left: 3px solid var(--acid); }
 .feed-pipeline strong { font-size: 11px; }
 .feed-pipeline span { color: var(--muted); font-size: 11px; line-height: 1.4; }
@@ -688,6 +688,9 @@ button:focus-visible { outline: 3px solid rgba(18, 71, 232, 0.35); outline-offse
 .proof-block h3 { font-size: 16px; margin: 0 0 13px; }
 .proof-block p { display: flex; justify-content: space-between; margin: 10px 0; font-size: 12px; }
 .proof-block span { color: var(--muted); }
+.proof-links, .receipt-proof-links { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; }
+.proof-links a, .receipt-proof-links a { color: var(--blue); font-size: 12px; font-weight: 700; text-decoration: none; }
+.proof-links a:hover, .receipt-proof-links a:hover { text-decoration: underline; }
 .wallet-boundary { display: flex; gap: 10px; background: var(--blue-soft); color: var(--blue); border: 1px solid #aac0ff; border-radius: 7px; padding: 11px; margin: 19px 0; }
 .wallet-boundary svg { flex: 0 0 22px; width: 22px; }
 .wallet-boundary p { margin: 0; font-size: 11px; line-height: 1.4; }

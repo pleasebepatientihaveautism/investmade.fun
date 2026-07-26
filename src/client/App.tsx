@@ -28,6 +28,10 @@ import {
 	type OnboardingPreferences,
 } from "../domain/schemas";
 import {
+	fillFeedPage,
+	nextFeedExcludedAssetIds,
+} from "../domain/feed-pagination";
+import {
 	removeLegacyPreferences,
 	writeAccountPreferences,
 } from "./preferences-storage";
@@ -78,6 +82,7 @@ export function App({ config }: { config: PublicConfig }) {
 	const [error, setError] = useState("");
 	const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
 	const [loadingMore, setLoadingMore] = useState(false);
+	const [feedExhausted, setFeedExhausted] = useState(false);
 	const [topUpRequest, setTopUpRequest] = useState(0);
 	const decisionTimer = useRef<number | undefined>(undefined);
 	const wallet = smartWalletAddress?.toLowerCase() ?? "";
@@ -132,9 +137,13 @@ export function App({ config }: { config: PublicConfig }) {
 				const generated = await api.generateFeed(opened.id, preferences);
 				setPreferences(preferences);
 				setSession(opened);
-				setFeed(generated);
+				setFeed({
+					...generated,
+					candidates: fillFeedPage(generated.candidates),
+				});
 				setIndex(0);
 				setSelectedIds([]);
+				setFeedExhausted(false);
 				scrollToTop();
 				setStage("swipe");
 			} catch (caught) {
@@ -161,6 +170,7 @@ export function App({ config }: { config: PublicConfig }) {
 		setReceiptCandidates([]);
 		setError("");
 		setDecisionFeedback(undefined);
+		setFeedExhausted(false);
 	}, [authenticated, privyReady]);
 
 	useEffect(
@@ -172,13 +182,16 @@ export function App({ config }: { config: PublicConfig }) {
 
 	const candidates = feed?.candidates ?? [];
 	const current = candidates[index];
-	const selected = candidates.filter((candidate) =>
-		selectedIds.includes(candidate.assetId),
-	);
+	const selected = selectedIds
+		.map((assetId) =>
+			candidates.find((candidate) => candidate.assetId === assetId),
+		)
+		.filter((candidate): candidate is Candidate => Boolean(candidate));
 	const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
 	const periodLimitUsd = preferences?.periodLimitUsd ?? 100;
 	const cadence = preferences?.cadence ?? "weekly";
-	const maxSelections = Math.floor(periodLimitUsd / ticketSizeUsd);
+	const selectedTotalUsd = selected.length * ticketSizeUsd;
+	const canAddCurrent = selectedTotalUsd + ticketSizeUsd <= periodLimitUsd;
 
 	const recoverReviewSession = useCallback(async () => {
 		if (!preferences) throw new Error("PREFERENCES_REQUIRED");
@@ -194,26 +207,30 @@ export function App({ config }: { config: PublicConfig }) {
 		if (!assetIds.length)
 			throw new Error("NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES");
 		setSession(opened);
-		setFeed(generated);
+		setFeed({
+			...generated,
+			candidates: fillFeedPage(generated.candidates),
+		});
 		setSelectedIds(assetIds);
 		return { sessionId: opened.id, assetIds };
 	}, [preferences, selectedIds]);
 
 	const loadMoreCandidates = useCallback(async () => {
-		if (!feed?.hasMore || !preferences || !session || loadingMore) return;
+		if (!feed || !preferences || !session || loadingMore || feedExhausted) return;
 		setLoadingMore(true);
 		try {
 			const next = await api.generateFeed(
 				session.id,
 				preferences,
-				feed.candidates.map((candidate) => candidate.assetId),
+				nextFeedExcludedAssetIds(feed, selectedIds),
 			);
+			const nextCandidates = fillFeedPage(next.candidates);
 			setFeed((currentFeed) => {
 				if (!currentFeed) return next;
 				const rankOffset = currentFeed.feed.cards.length;
 				return {
 					...next,
-					candidates: [...currentFeed.candidates, ...next.candidates],
+					candidates: [...currentFeed.candidates, ...nextCandidates],
 					feed: {
 						...next.feed,
 						cards: [
@@ -233,32 +250,36 @@ export function App({ config }: { config: PublicConfig }) {
 			) {
 				console.error("Could not load the next feed page", caught);
 			}
-			setFeed((currentFeed) =>
-				currentFeed ? { ...currentFeed, hasMore: false } : currentFeed,
-			);
+			setFeedExhausted(true);
 		} finally {
 			setLoadingMore(false);
 		}
-	}, [feed, loadingMore, preferences, session]);
+	}, [
+		feed,
+		feedExhausted,
+		loadingMore,
+		preferences,
+		selectedIds,
+		session,
+	]);
 
 	useEffect(() => {
 		if (
-			!feed?.hasMore ||
+			!feed ||
+			feedExhausted ||
 			loadingMore ||
-			index < Math.max(0, candidates.length - 3) ||
-			selectedIds.length >= maxSelections
+			index < Math.max(0, candidates.length - 3)
 		) {
 			return;
 		}
 		void loadMoreCandidates();
 	}, [
 		candidates.length,
-		feed?.hasMore,
+		feed,
+		feedExhausted,
 		index,
 		loadMoreCandidates,
 		loadingMore,
-		maxSelections,
-		selectedIds.length,
 	]);
 
 	function decide(add: boolean) {
@@ -266,7 +287,7 @@ export function App({ config }: { config: PublicConfig }) {
 		if (
 			add &&
 			!selectedIds.includes(current.assetId) &&
-			selectedIds.length < maxSelections
+			canAddCurrent
 		) {
 			setSelectedIds((ids) => [...ids, current.assetId]);
 		}
@@ -274,7 +295,7 @@ export function App({ config }: { config: PublicConfig }) {
 	}
 
 	function animateDecision(add: boolean) {
-		if (!current || decisionFeedback) return;
+		if (!current || decisionFeedback || (add && !canAddCurrent)) return;
 		setDecisionFeedback(add ? "invest" : "skip");
 		decisionTimer.current = window.setTimeout(() => {
 			decide(add);
@@ -285,6 +306,7 @@ export function App({ config }: { config: PublicConfig }) {
 
 	function remove(assetId: string) {
 		setSelectedIds((ids) => ids.filter((id) => id !== assetId));
+		setFeedExhausted(false);
 	}
 
 	function navigate(target: View) {
@@ -334,7 +356,11 @@ export function App({ config }: { config: PublicConfig }) {
 					/>
 				) : view === "positions" ? (
 					<PositionsScreen
-						candidates={candidates}
+						candidates={Array.from(
+							new Map(
+								candidates.map((candidate) => [candidate.assetId, candidate]),
+							).values(),
+						)}
 						wallet={wallet}
 						demoMode={config.demoMode}
 					/>
@@ -456,9 +482,9 @@ export function App({ config }: { config: PublicConfig }) {
 										<button
 											type="button"
 											className="gesture gesture-skip"
-											onClick={() => animateDecision(false)}
-											aria-label="Skip asset"
-											disabled={Boolean(decisionFeedback)}
+							onClick={() => animateDecision(false)}
+							aria-label="Skip asset"
+								disabled={Boolean(decisionFeedback)}
 										>
 											<ArrowLeft />
 											<span>
@@ -479,7 +505,7 @@ export function App({ config }: { config: PublicConfig }) {
 											className="gesture gesture-add"
 											onClick={() => animateDecision(true)}
 											aria-label={`Add ${ticketSizeUsd} USDG`}
-											disabled={Boolean(decisionFeedback)}
+								disabled={Boolean(decisionFeedback) || !canAddCurrent}
 										>
 											<LucideArrowRight />
 											<span>
@@ -500,9 +526,9 @@ export function App({ config }: { config: PublicConfig }) {
 										</button>
 										<button
 											type="button"
-											className="button button-primary"
-											onClick={() => animateDecision(true)}
-											disabled={Boolean(decisionFeedback)}
+							className="button button-primary"
+							onClick={() => animateDecision(true)}
+							disabled={Boolean(decisionFeedback) || !canAddCurrent}
 										>
 											Add {ticketSizeUsd} USDG
 										</button>
@@ -568,32 +594,36 @@ export function App({ config }: { config: PublicConfig }) {
 						/>
 						<section className="evidence-detail">
 							<div className="feed-method-copy">
-								<h2>How your feed gets personal</h2>
+								<h2>How your feed earns your trust</h2>
 								<p>
 									{config.executionMode === "demo"
 										? "Your rules shape the feed. Demo mode applies them to eligible fixture routes."
-										: "Your rules narrow the market. We rank only assets you can actually buy now."}
+										: "Your rules shape the feed. Live routes prove what is buyable. You sign every swap."}
 								</p>
 								<ol className="feed-pipeline">
 									<li>
-										<strong>1 · Your guardrails</strong>
-										<span>Cadence, cap, ticket, risk, and asset mix set the search space.</span>
+										<strong>1 · Your rules</strong>
+										<span>Cadence, cap, ticket, risk, and asset mix.</span>
 									</li>
 									<li>
-										<strong>2 · Route check</strong>
+										<strong>2 · Live routes</strong>
 										<span>
 											{config.executionMode === "demo"
-												? "Fixture routes pass the same eligibility and policy gates."
-												: "Robinhood Chain checks and an exact-size Uniswap quote remove anything stale or untradeable."}
+												? "Fixture routes pass the same eligibility gates."
+												: "Fresh Robinhood Chain checks + exact Uniswap quote."}
 										</span>
 									</li>
 									<li>
-										<strong>3 · Private rank</strong>
+										<strong>3 · Private 0G rank</strong>
 										<span>
 											{feed?.proof.teeVerified
-												? "0G ranks the survivors in a verified TEE. The Graph adds Uniswap v4 price history."
-												: "Local ranking uses the production schema. The Graph adds price history; proof marks ranking unverified."}
+												? "0G ranks only verified candidates inside a TEE."
+												: "Local ranking uses the same bounded input and output schema."}
 										</span>
+									</li>
+									<li>
+										<strong>4 · You approve</strong>
+										<span>Policy rechecks the route. Your wallet signs last.</span>
 									</li>
 								</ol>
 							</div>

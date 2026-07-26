@@ -29,6 +29,7 @@ describe("review signing safety", () => {
 			epochId: "2026-W30:basket:test",
 			selected: [candidate],
 			ticketSizeUsd: 0.1,
+			periodLimitUsd: 10,
 			wallet: "0x71f30000000000000000000000000000000009a2",
 		};
 		const amountInBaseUnits = ticketSizeToBaseUnits(
@@ -39,6 +40,7 @@ describe("review signing safety", () => {
 			chainId: 4663 as const,
 			inputToken:
 				"0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const,
+			periodLimitUsd: basket.periodLimitUsd,
 			selections: [{ assetId: candidate.assetId, amountInBaseUnits }],
 			slippageBps: 50,
 		};

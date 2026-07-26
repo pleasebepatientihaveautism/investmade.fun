@@ -590,7 +590,6 @@ The backend—not the model—constructs candidates:
 for each canonical asset:
   reject if not on allowlist
   reject if user excluded
-  reject if jurisdiction/stock eligibility fails
   reject if halted, paused, or stale
   request exact-card-size Uniswap quote
   reject if no route

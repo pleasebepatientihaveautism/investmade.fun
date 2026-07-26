@@ -20,9 +20,7 @@ const envSchema = z
     WORLD_RP_ID: z.string().optional(),
     WORLD_RP_SIGNING_KEY: z.string().optional(),
     WORLD_ACTION: z.string().default("investmade-human-v1"),
-    ROBINHOOD_RPC_URL: z.string().url().default("https://rpc.mainnet.chain.robinhood.com"),
-    STOCK_ELIGIBILITY_PROVIDER_URL: z.string().url().optional(),
-    STOCK_ELIGIBILITY_API_KEY: z.string().optional()
+    ROBINHOOD_RPC_URL: z.string().url().default("https://rpc.mainnet.chain.robinhood.com")
   })
   .superRefine((env, context) => {
     if (env.LOCAL_LIVE_EXECUTION === "true" && env.INVESTMADE_DEMO_MODE !== "true") {

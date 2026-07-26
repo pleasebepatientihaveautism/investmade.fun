@@ -9,7 +9,7 @@ the resulting approval, Permit2, and swap calls through a non-custodial ERC-4337
 ## What worked well
 
 - The same exact-input API flow returned `CLASSIC` routes for WETH, AAPL, and TSLA on chain 4663.
-- `/permissions` exposed the tokenized-stock eligibility boundary.
+- `/permissions` exposed per-token transfer restrictions before quote and execution.
 - Wallet-ready transaction objects let us keep execution non-custodial.
 
 ## Friction

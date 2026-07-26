@@ -79,17 +79,6 @@ export function AppShell({
 				)}
 			</header>
 			{children}
-			<footer className="logo-attribution">
-				<a href="https://forgeglobal.com/search-companies/">Selected company marks from Forge</a>
-				<span> · </span>
-				<a href="https://www.coingecko.com/en/api">Crypto icons by CoinGecko</a>
-				<span> · </span>
-				<a href="https://logo.dev">Logos provided by Logo.dev</a>
-				<span> · </span>
-				<a href="https://www.allinvestview.com/tools/ticker-logos/">
-					Fallback logos by AllInvestView
-				</a>
-			</footer>
 		</div>
 	);
 }

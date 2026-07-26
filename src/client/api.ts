@@ -188,13 +188,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ...preferences, excludedAssetIds })
     }),
-  prepareExecution: (sessionId: string, assetIds: string[], ticketSizeUsd: number) =>
+  prepareExecution: (
+    sessionId: string,
+    assetIds: string[],
+    ticketSizeUsd: number,
+    periodLimitUsd: number,
+  ) =>
     request<ExecutionRecord>("/api/executions/prepare", {
       method: "POST",
       body: JSON.stringify({
         sessionId,
         chainId: 4663,
         inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+        periodLimitUsd,
         selections: assetIds.map((assetId) => ({
           assetId,
           amountInBaseUnits: ticketSizeToBaseUnits(ticketSizeUsd).toString()

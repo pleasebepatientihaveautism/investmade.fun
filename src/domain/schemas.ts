@@ -140,6 +140,9 @@ export const executionRequestSchema = z.object({
   sessionId: z.string().min(1),
   chainId: z.literal(ROBINHOOD_CHAIN_ID),
   inputToken: z.literal(USDG_ADDRESS),
+  periodLimitUsd: z.number().refine(isPeriodLimitUsd, {
+    message: "Period limit must be from $10.00 to $100.00 in $0.01 increments."
+  }).default(100),
   selections: z.array(selectedAssetSchema).min(1),
   slippageBps: z.number().int().min(1).max(100)
 });

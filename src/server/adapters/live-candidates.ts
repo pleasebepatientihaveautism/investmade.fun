@@ -35,7 +35,6 @@ const oraclePausedAbi = [
 const FEED_CONCURRENCY = 2;
 const REGISTRY_CACHE_MS = 5 * 60_000;
 const CONTRACT_CODE_CACHE_MS = 10 * 60_000;
-const STOCK_ELIGIBILITY_CACHE_MS = 30_000;
 const PERMISSION_CACHE_MS = 60_000;
 
 export class LiveCandidateProvider implements CandidateProvider {
@@ -72,9 +71,7 @@ export class LiveCandidateProvider implements CandidateProvider {
         Number(isDegenCommunityAsset(right.assetId)) - Number(isDegenCommunityAsset(left.assetId))
       );
     const hasStocks = assets.some((asset) => asset.kind === "STOCK_TOKEN");
-    const [registry, stockEligible] = hasStocks
-      ? await Promise.all([this.assetRegistry(), this.stockEligible(wallet)])
-      : [undefined, false] as const;
+    const registry = hasStocks ? await this.assetRegistry() : undefined;
     const target = Math.max(1, Math.min(requestedLimit, assets.length));
     const limit = this.config.localLiveExecution ? assets.length : target * 2;
     const candidates: Candidate[] = [];
@@ -90,7 +87,6 @@ export class LiveCandidateProvider implements CandidateProvider {
             amountInBaseUnits,
             now,
             registry,
-            stockEligible,
             true
           )
         )
@@ -112,9 +108,7 @@ export class LiveCandidateProvider implements CandidateProvider {
     const assets = Object.values(ASSET_REGISTRY)
       .filter((asset) => requested.has(asset.assetId));
     const hasStocks = assets.some((asset) => asset.kind === "STOCK_TOKEN");
-    const [registry, stockEligible] = hasStocks
-      ? await Promise.all([this.assetRegistry(), this.stockEligible(wallet)])
-      : [undefined, false] as const;
+    const registry = hasStocks ? await this.assetRegistry() : undefined;
     const candidates: Candidate[] = [];
     // ponytail: execution refreshes are rare; serial requests avoid provider 429s.
     for (const asset of assets) {
@@ -124,7 +118,6 @@ export class LiveCandidateProvider implements CandidateProvider {
         amountInBaseUnits,
         now,
         registry,
-        stockEligible,
         false
       );
       if (candidate) candidates.push(candidate);
@@ -138,7 +131,6 @@ export class LiveCandidateProvider implements CandidateProvider {
     amountInBaseUnits: string,
     now: Date,
     registry: { assets?: RobinhoodAsset[] } | undefined,
-    stockEligible: boolean,
     includeQuote: boolean
   ): Promise<Candidate | undefined> {
     try {
@@ -153,7 +145,6 @@ export class LiveCandidateProvider implements CandidateProvider {
       let eligible = true;
       let permissionAllowed = true;
       if (asset.kind === "STOCK_TOKEN") {
-        if (!stockEligible) return;
         const rhAsset = registry?.assets?.find((item) => item.tokenSymbol === asset.symbol);
         const deployment = rhAsset?.deployments.find(
           (item) => item.chainId === 4663 && item.contractAddress.toLowerCase() === asset.address.toLowerCase()
@@ -184,7 +175,7 @@ export class LiveCandidateProvider implements CandidateProvider {
           PERMISSION_CACHE_MS,
           () => this.uniswap.permissionAllowed(wallet, asset.address)
         );
-        eligible = stockEligible;
+        eligible = true;
       }
 
       const seed: Candidate = {
@@ -225,27 +216,6 @@ export class LiveCandidateProvider implements CandidateProvider {
       });
       if (!assetsResponse.ok) throw new Error(`ROBINHOOD_ASSETS_${assetsResponse.status}`);
       return (await assetsResponse.json()) as { assets?: RobinhoodAsset[] };
-    });
-  }
-
-  private async stockEligible(wallet: string): Promise<boolean> {
-    // Local-live uses Uniswap's per-token permission response together with
-    // Robinhood's active-asset and oracle checks. Production can additionally
-    // require the configured jurisdiction/eligibility service.
-    return this.cached(`stock-eligible:${wallet.toLowerCase()}`, STOCK_ELIGIBILITY_CACHE_MS, async () => {
-      if (!this.config.STOCK_ELIGIBILITY_PROVIDER_URL) return this.config.localLiveExecution;
-      const response = await fetch(this.config.STOCK_ELIGIBILITY_PROVIDER_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.STOCK_ELIGIBILITY_API_KEY ?? ""}`
-        },
-        body: JSON.stringify({ wallet, product: "ROBINHOOD_STOCK_TOKENS", chainId: 4663 }),
-        signal: AbortSignal.timeout(8_000)
-      });
-      if (!response.ok) return false;
-      const result = (await response.json()) as { eligible?: boolean };
-      return result.eligible === true;
     });
   }
 
