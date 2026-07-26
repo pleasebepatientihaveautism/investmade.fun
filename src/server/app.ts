@@ -193,22 +193,22 @@ export function createApp(deps: AppDependencies) {
 		}
 		// ponytail: demo data is local, so never wait on a network request to generate it.
 		if (deps.config.demoMode) {
-			response.json({ period: "1M", source: "demo", points: demoHistory(asset.symbol) });
+			response.json({ period: "1W", source: "demo", points: demoHistory(asset.symbol) });
 			return;
 		}
 		try {
 			const points = (await deps.history?.history(asset)) ?? [];
-			const monthAgo = Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60;
-			const monthlyPoints = points.filter((point) => point.timestamp >= monthAgo);
-			if (monthlyPoints.length >= 2) {
-				response.json({ period: "1M", source: "the-graph", points: monthlyPoints });
+			const weekAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+			const weeklyPoints = points.filter((point) => point.timestamp >= weekAgo);
+			if (weeklyPoints.length >= 2) {
+				response.json({ period: "1W", source: "the-graph", points: weeklyPoints });
 				return;
 			}
 		} catch {
 			// Charts are enrichment; quote and execution flows must remain available.
 		}
 		response.json({
-			period: "1M",
+			period: "1W",
 			source: "unavailable",
 			points: [],
 		});
@@ -542,7 +542,7 @@ export function createApp(deps: AppDependencies) {
 					.toString(),
 				authorizedPlanHash: requestedPlanHash,
 			policyHash: policyHash(
-				slotBudgetBaseUnits ?? "0",
+				parsed.selections,
 				parsed.periodLimitUsd,
 			),
 				callCommitments: preparation.walletCalls.map((call) =>

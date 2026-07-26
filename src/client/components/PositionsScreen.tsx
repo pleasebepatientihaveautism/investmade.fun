@@ -2,8 +2,7 @@ import { encodeFunctionData, formatUnits } from "viem";
 import { useEffect, useState } from "react";
 import { useWallets, type EIP1193Provider } from "@privy-io/react-auth";
 import type { Candidate } from "../../domain/schemas";
-import { api, type AssetHistoryResponse, type ExitPreparation, type WalletCall } from "../api";
-import { calculatePortfolioSnapshot } from "../portfolio";
+import { api, type ExitPreparation, type WalletCall } from "../api";
 import { AssetMark } from "./AssetMark";
 import { ArrowRight, Check, Shield } from "./Icons";
 
@@ -37,7 +36,6 @@ export function PositionsScreen({
   const [balances, setBalances] = useState<Record<string, string>>({});
   const [prepared, setPrepared] = useState<Record<string, ExitPreparation>>({});
   const [status, setStatus] = useState<Record<string, string>>({});
-  const [histories, setHistories] = useState<Record<string, AssetHistoryResponse>>({});
   const [isExitingAll, setIsExitingAll] = useState(false);
   const [error, setError] = useState("");
 
@@ -72,52 +70,16 @@ export function PositionsScreen({
     };
   }, [activeWallet, candidates, demoMode, wallet]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all(
-      candidates.map(async (candidate) => {
-        try {
-          return [candidate.assetId, await api.assetHistory(candidate.assetId)] as const;
-        } catch {
-          return [
-            candidate.assetId,
-            { period: "1M", source: "unavailable", points: [] } satisfies AssetHistoryResponse
-          ] as const;
-        }
-      })
-    ).then((entries) => {
-      if (!cancelled) setHistories(Object.fromEntries(entries));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [candidates]);
-
-  const portfolio = calculatePortfolioSnapshot(
-    candidates.map((candidate) => ({
-      rawBalance: balances[candidate.assetId] ?? "0",
-      decimals: candidate.decimals,
-      currentPriceUsd: Number(candidate.quote.unitPriceUsd),
-      history: histories[candidate.assetId]
-    }))
+  const portfolioValueUsd = candidates.reduce(
+    (total, candidate) =>
+      total +
+      (Number(balances[candidate.assetId] ?? "0") / 10 ** candidate.decimals) *
+        Number(candidate.quote.unitPriceUsd),
+    0,
   );
   const holdings = candidates.filter(
     (candidate) => BigInt(balances[candidate.assetId] ?? "0") > 0n
   );
-  const graphHistoryCount = holdings.filter(
-    (candidate) => histories[candidate.assetId]?.source === "the-graph"
-  ).length;
-  const demoHistoryCount = holdings.filter(
-    (candidate) => histories[candidate.assetId]?.source === "demo"
-  ).length;
-  const chartSource =
-    graphHistoryCount === holdings.length && holdings.length > 0
-      ? "The Graph · balance weighted"
-      : graphHistoryCount > 0
-        ? "The Graph + live quotes"
-        : demoHistoryCount > 0
-          ? "Demo price path · balance weighted"
-          : "Price history unavailable";
 
   async function prepare(candidate: Candidate) {
     const amount = balances[candidate.assetId] ?? "0";
@@ -200,25 +162,12 @@ export function PositionsScreen({
     }
   }
 
-  const chartValues = portfolio.points.map((point) => point.value);
-  const chartMin = Math.min(...chartValues);
-  const chartMax = Math.max(...chartValues);
-  const chartSpread = chartMax - chartMin || 1;
-  const chartLine = portfolio.points
-    .map((point, index) => {
-      const x = portfolio.points.length === 1 ? 50 : (index / (portfolio.points.length - 1)) * 100;
-      const y = 30 - ((point.value - chartMin) / chartSpread) * 25;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const positive = (portfolio.changeUsd ?? 0) >= 0;
-
   return (
     <main className="positions-page">
       <header className="positions-heading">
         <div>
           <h1>Portfolio</h1>
-          <p>Live wallet value and one-month change from Graph-backed price history when available.</p>
+          <p>Live wallet value from current executable quotes.</p>
         </div>
         {!demoMode && (
           <button
@@ -231,29 +180,10 @@ export function PositionsScreen({
           </button>
         )}
       </header>
-      <section className={`portfolio-summary${positive ? " is-up" : " is-down"}`}>
+      <section className="portfolio-summary">
         <div className="portfolio-summary-meta">
           <span>Portfolio value</span>
-          <strong>{usdFormatter.format(portfolio.currentValueUsd)}</strong>
-          <small>
-            {portfolio.changePercent === null || portfolio.changeUsd === null
-              ? "1M change unavailable"
-              : `${portfolio.changeUsd >= 0 ? "+" : ""}${usdFormatter.format(portfolio.changeUsd)} (${portfolio.changePercent >= 0 ? "+" : ""}${portfolio.changePercent.toFixed(2)}%) · 1M`}
-          </small>
-        </div>
-        <svg viewBox="0 0 100 34" preserveAspectRatio="none" role="img" aria-label="Portfolio one month value chart">
-          {chartLine ? (
-            <>
-              <polygon points={`0,34 ${chartLine} 100,34`} />
-              <polyline points={chartLine} />
-            </>
-          ) : (
-            <line x1="0" y1="20" x2="100" y2="20" />
-          )}
-        </svg>
-        <div className="portfolio-chart-source">
-          <span>1M</span>
-          <span>{chartSource}</span>
+          <strong>{usdFormatter.format(portfolioValueUsd)}</strong>
         </div>
       </section>
       <p className="positions-intro">

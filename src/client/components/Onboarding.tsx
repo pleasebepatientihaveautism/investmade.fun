@@ -3,6 +3,7 @@ import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { IDKit, orbLegacy } from "@worldcoin/idkit-core";
 import {
+	isPeriodLimitUsd,
 	isTicketSizeUsd,
 	type OnboardingPreferences,
 } from "../../domain/schemas";
@@ -68,8 +69,8 @@ const PERIOD_LIMIT_OPTIONS: Array<{
 }> = [
 	{ id: 10, title: "$10", description: "Keep it tight. Learn the flow." },
 	{ id: 50, title: "$50", description: "A balanced amount for the period." },
-	{ id: 100, title: "$100", description: "Use the full onchain limit." },
-	{ id: "custom", title: "Custom", description: "Set any amount from $10 to $100." },
+	{ id: 100, title: "$100", description: "Set a larger period budget." },
+	{ id: "custom", title: "Custom", description: "Set your DCA budget." },
 ];
 
 const TICKET_OPTIONS: Array<{
@@ -527,7 +528,7 @@ function QuestionFlow({
 						))}
 					</div>
 					{draft.periodLimitChoice === "custom" ? (
-						<label className="custom-ticket"><span>Custom period limit</span><span><b>$</b><input type="number" min="10" max="100" step="0.01" inputMode="decimal" value={draft.customPeriodLimitInput} onChange={(event) => { const value = event.target.value; onDraft((current) => ({ ...current, customPeriodLimitInput: value, periodLimitUsd: customPeriodLimit(value) })); }} placeholder="10.00–100.00" /></span><small>USDG limit from $10.00 to $100.00.</small></label>
+						<label className="custom-ticket"><span>Custom period limit</span><span><b>$</b><input type="number" min="0.1" step="0.01" inputMode="decimal" value={draft.customPeriodLimitInput} onChange={(event) => { const value = event.target.value; onDraft((current) => ({ ...current, customPeriodLimitInput: value, periodLimitUsd: customPeriodLimit(value) })); }} placeholder="0.10" /></span><small>Your DCA budget is the basket limit.</small></label>
 					) : null}
 					<QuestionActions back={() => onStep("cadence")} next={() => onStep("ticket")} nextDisabled={!draft.periodLimitUsd} />
 				</>
@@ -588,12 +589,12 @@ function QuestionFlow({
 											ticketSizeUsd: customTicket(value),
 										}));
 									}}
-									placeholder={`0.10–${draft.periodLimitUsd ?? 100}.00`}
+									placeholder={`Up to ${draft.periodLimitUsd ?? 100}.00`}
 									aria-describedby="custom-ticket-help"
 								/>
 							</span>
 							<small id="custom-ticket-help">
-								{`USDG amount from $0.10 to $${draft.periodLimitUsd ?? 100}.00.`}
+								{`USDG amount up to your ${draft.periodLimitUsd ?? 100}.00 DCA budget.`}
 							</small>
 						</label>
 					) : null}
@@ -890,7 +891,7 @@ function customTicket(value: string): number | undefined {
 function customPeriodLimit(value: string): number | undefined {
 	const parsed = Number(value);
 	const rounded = Math.round(parsed * 100) / 100;
-	return parsed >= 10 && parsed <= 100 && Number.isFinite(parsed) && Math.abs(parsed - rounded) < 1e-8
+	return isPeriodLimitUsd(rounded)
 		? rounded
 		: undefined;
 }

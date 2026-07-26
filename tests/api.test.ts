@@ -9,6 +9,7 @@ import type { CandidateProvider } from "../src/server/adapters/types.js";
 import { createApp, type AppDependencies } from "../src/server/app.js";
 import { loadConfig } from "../src/server/config.js";
 import { MemoryStateStore } from "../src/server/store.js";
+import { historyStartBlock } from "../src/server/adapters/substreams-history.js";
 
 function testApp(history?: AppDependencies["history"]) {
 	const provider = new DemoProvider();
@@ -58,8 +59,12 @@ describe("core API flow", () => {
 			.expect(200);
 
 		expect(calls).toBe(0);
-		expect(response.body).toMatchObject({ period: "1M", source: "demo" });
+		expect(response.body).toMatchObject({ period: "1W", source: "demo" });
 		expect(response.body.points).toHaveLength(31);
+	});
+
+	it("limits Substreams history to the latest week of blocks", () => {
+		expect(historyStartBlock(10_000_000n)).toBe(4_000_000n);
 	});
 
 	it("opens repeatable demo baskets, generates a bounded feed, and reserves execution once", async () => {
@@ -158,6 +163,31 @@ describe("core API flow", () => {
 			})
 			.expect(422)
 			.expect(({ body }) => expect(body.error).toBe("BUDGET_EXCEEDED"));
+	});
+
+	it("allows different asset allocations when their total stays within the DCA budget", async () => {
+		const app = testApp();
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "weekly" })
+			.expect(200);
+
+		const prepared = await request(app)
+			.post("/api/executions/prepare")
+			.send({
+				sessionId: opened.body.id,
+				chainId: 4663,
+				inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+				periodLimitUsd: 250,
+				selections: [
+					{ assetId: "rh:4663:WETH", amountInBaseUnits: "120000000" },
+					{ assetId: "rh:4663:AAPL", amountInBaseUnits: "130000000" },
+				],
+				slippageBps: 50,
+			})
+			.expect(200);
+
+		expect(prepared.body.plan.totalInputBaseUnits).toBe("250000000");
 	});
 
 	it("filters the feed using validated onboarding preferences", async () => {

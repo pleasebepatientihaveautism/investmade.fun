@@ -79,7 +79,7 @@ export interface AssetIconsResponse {
 }
 
 export interface AssetHistoryResponse {
-  period: "1M";
+  period: "1W";
   source: "the-graph" | "demo" | "unavailable";
   points: Array<{ timestamp: number; price: number }>;
 }
@@ -97,6 +97,22 @@ let authProvider:
       getWalletAddress: () => string | undefined;
     }
   | undefined;
+
+const historyRequests = new Map<string, Promise<AssetHistoryResponse>>();
+
+function assetHistory(assetId: string) {
+  let requestForAsset = historyRequests.get(assetId);
+  if (!requestForAsset) {
+    requestForAsset = request<AssetHistoryResponse>(
+      `/api/assets/${encodeURIComponent(assetId)}/history`,
+    ).catch((error) => {
+      historyRequests.delete(assetId);
+      throw error;
+    });
+    historyRequests.set(assetId, requestForAsset);
+  }
+  return requestForAsset;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -156,8 +172,7 @@ function apiErrorMessage(code: string) {
 export const api = {
   config: () => request<PublicConfig>("/api/config"),
   assetIcons: () => request<AssetIconsResponse>("/api/assets/icons"),
-  assetHistory: (assetId: string) =>
-    request<AssetHistoryResponse>(`/api/assets/${encodeURIComponent(assetId)}/history`),
+  assetHistory,
   usdgBalance: (wallet: string) => request<TokenBalanceResponse>(`/api/balances/${encodeURIComponent(wallet)}/usdg`),
   worldSignature: () =>
     request<{

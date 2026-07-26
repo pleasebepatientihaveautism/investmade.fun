@@ -193,6 +193,12 @@ export function App({ config }: { config: PublicConfig }) {
 	const selectedTotalUsd = selected.length * ticketSizeUsd;
 	const canAddCurrent = selectedTotalUsd + ticketSizeUsd <= periodLimitUsd;
 
+	useEffect(() => {
+		for (const candidate of candidates.slice(index, index + 2)) {
+			void api.assetHistory(candidate.assetId).catch(() => undefined);
+		}
+	}, [candidates, index]);
+
 	const recoverReviewSession = useCallback(async () => {
 		if (!preferences) throw new Error("PREFERENCES_REQUIRED");
 		const opened = await api.openSession(preferences.cadence);

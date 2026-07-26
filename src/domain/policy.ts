@@ -114,15 +114,15 @@ export function validateExecutionAssets(
   const candidatesById = new Map(candidates.map((candidate) => [candidate.assetId, candidate]));
   const seen = new Set<string>();
   let total = 0n;
-  const slot = BigInt(request.selections[0]?.amountInBaseUnits ?? "0");
   const periodBudget = ticketSizeToBaseUnits(request.periodLimitUsd);
   const minTicket = ticketSizeToBaseUnits(0.1);
   const increment = TICKET_SIZE_INCREMENT_BASE_UNITS;
-  if (slot < minTicket || slot > periodBudget || slot % increment !== 0n) {
-    throw new PolicyError("INVALID_SLOT_SIZE", "Ticket size must be from 0.10 to 100.00 USDG in 0.01 increments.");
-  }
 
   for (const selection of request.selections) {
+    const amount = BigInt(selection.amountInBaseUnits);
+    if (amount < minTicket || amount % increment !== 0n) {
+      throw new PolicyError("INVALID_SLOT_SIZE", "Each allocation must be at least 0.10 USDG in 0.01 increments.");
+    }
     const candidate = candidatesById.get(selection.assetId);
     const registered = registryById.get(selection.assetId);
     if (
@@ -138,11 +138,8 @@ export function validateExecutionAssets(
     if (seen.has(selection.assetId)) {
       throw new PolicyError("DUPLICATE_ASSET", "Each asset may appear only once.");
     }
-    if (BigInt(selection.amountInBaseUnits) !== slot) {
-      throw new PolicyError("INVALID_SLOT_SIZE", "Execution must preserve the authorized slot size.");
-    }
     seen.add(selection.assetId);
-    total += BigInt(selection.amountInBaseUnits);
+    total += amount;
   }
 
   if (total > periodBudget) {
@@ -151,16 +148,14 @@ export function validateExecutionAssets(
 }
 
 export function policyHash(
-  slotBudgetBaseUnits: string,
+  selections: ExecutionRequest["selections"],
   periodLimitUsd: number,
 ): `sha256:${string}` {
-  const slotBudget = BigInt(slotBudgetBaseUnits);
   const periodBudget = ticketSizeToBaseUnits(periodLimitUsd);
   return sha256({
     policyVersion: POLICY_VERSION,
     periodBudget: periodBudget.toString(),
-    slotBudget: slotBudgetBaseUnits,
-    maxCards: slotBudget > 0n ? Number(periodBudget / slotBudget) : 0,
+    selections: [...selections].sort((left, right) => left.assetId.localeCompare(right.assetId)),
     maxPriceImpactBps: MAX_PRICE_IMPACT_BPS
   });
 }

@@ -10,8 +10,7 @@ import {
 export const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 export const baseUnitsSchema = z.string().regex(/^[0-9]+$/);
 export const MIN_TICKET_SIZE_USD = 0.1;
-export const MIN_PERIOD_LIMIT_USD = 10;
-export const MAX_PERIOD_LIMIT_USD = 100;
+export const MIN_PERIOD_LIMIT_USD = MIN_TICKET_SIZE_USD;
 export const TICKET_SIZE_INCREMENT_USD = 0.01;
 export const TICKET_SIZE_INCREMENT_BASE_UNITS = 10_000n;
 
@@ -20,7 +19,7 @@ export function isTicketSizeUsd(value: number): boolean {
   return (
     Number.isFinite(value) &&
     value >= MIN_TICKET_SIZE_USD &&
-    value <= 100 &&
+    Number.isSafeInteger(Math.round(value * 10 ** USDG_DECIMALS)) &&
     Math.abs(cents - Math.round(cents)) < 1e-8
   );
 }
@@ -30,7 +29,7 @@ export function isPeriodLimitUsd(value: number): boolean {
   return (
     Number.isFinite(value) &&
     value >= MIN_PERIOD_LIMIT_USD &&
-    value <= MAX_PERIOD_LIMIT_USD &&
+    Number.isSafeInteger(Math.round(value * 10 ** USDG_DECIMALS)) &&
     Math.abs(cents - Math.round(cents)) < 1e-8
   );
 }
@@ -77,10 +76,10 @@ export const candidateSchema = z.object({
 export const personalizationPreferencesSchema = z.object({
   cadence: z.enum(["daily", "weekly", "monthly"]),
   periodLimitUsd: z.number().refine(isPeriodLimitUsd, {
-    message: "Period limit must be from $10.00 to $100.00 in $0.01 increments."
+    message: "Period limit must be at least $0.10 in $0.01 increments."
   }).optional(),
   ticketSizeUsd: z.number().refine(isTicketSizeUsd, {
-    message: "Ticket size must be from $0.10 to $100.00 in $0.01 increments."
+    message: "Ticket size must be at least $0.10 in $0.01 increments."
   }),
   riskMode: z.enum(["conservative", "balanced", "degen"]),
   assetClasses: z
@@ -141,7 +140,7 @@ export const executionRequestSchema = z.object({
   chainId: z.literal(ROBINHOOD_CHAIN_ID),
   inputToken: z.literal(USDG_ADDRESS),
   periodLimitUsd: z.number().refine(isPeriodLimitUsd, {
-    message: "Period limit must be from $10.00 to $100.00 in $0.01 increments."
+    message: "Period limit must be at least $0.10 in $0.01 increments."
   }).default(100),
   selections: z.array(selectedAssetSchema).min(1),
   slippageBps: z.number().int().min(1).max(100)

@@ -12,42 +12,23 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2
 });
 
-function loadingPreview(symbol: string, unitPriceUsd: string): number[] {
-  const base = Number(unitPriceUsd);
-  const seed = [...symbol].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-  return Array.from({ length: 31 }, (_, index) => {
-    const wave = Math.sin((index + seed) * 0.52) * 0.018;
-    const drift = (index / 30 - 0.5) * 0.025;
-    return base * (1 + wave + drift);
-  });
-}
-
 function PriceSparkline({ candidate }: { candidate: Candidate }) {
   const [history, setHistory] = useState<AssetHistoryResponse>();
 
   useEffect(() => {
     let active = true;
-    setHistory(undefined);
     void api.assetHistory(candidate.assetId)
-      .then((result) => {
-        if (active) setHistory(result);
-      })
-      .catch(() => {
-        if (active) setHistory({ period: "1M", source: "unavailable", points: [] });
-      });
+      .then((result) => active && setHistory(result))
+      .catch(() => active && setHistory({ period: "1W", source: "unavailable", points: [] }));
     return () => {
       active = false;
     };
   }, [candidate.assetId]);
 
-  const prices =
-    history?.points.map((point) => point.price) ??
-    loadingPreview(candidate.symbol, candidate.quote.unitPriceUsd);
-  const hasLoadedHistory = Boolean(history?.points.length);
+  const prices = history?.points.map((point) => point.price) ?? [];
   const first = prices[0];
   const last = prices.at(-1);
   const change = first && last ? ((last - first) / first) * 100 : 0;
-  const positive = change >= 0;
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const spread = max - min || 1;
@@ -58,39 +39,19 @@ function PriceSparkline({ candidate }: { candidate: Candidate }) {
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(" ");
-  const sourceLabel =
-    history?.source === "the-graph"
-      ? "The Graph · Uniswap v4"
-      : history?.source === "demo"
-        ? "Demo price path"
-        : history
-          ? "History unavailable"
-          : "Loading history";
+  const source = history?.source === "the-graph" ? "The Graph · Uniswap v4" : history ? "History unavailable" : "Loading chart";
+  const period = history?.period ?? "1W";
 
   return (
-    <div className={`price-chart${positive ? " is-up" : " is-down"}`}>
+    <div className={`price-chart${change < 0 ? " is-down" : ""}`}>
       <div className="chart-meta">
         <strong>{usdFormatter.format(Number(candidate.quote.unitPriceUsd))}</strong>
-        <span>
-          {hasLoadedHistory ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%` : "—"} · 1M
-        </span>
+        <span>{prices.length ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}% · ${period}` : `— · ${period}`}</span>
       </div>
-      <svg
-        viewBox="0 0 100 32"
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`${candidate.symbol} one month price chart`}
-      >
-        {line ? (
-          <>
-            <polygon points={`0,32 ${line} 100,32`} />
-            <polyline points={line} />
-          </>
-        ) : (
-          <line x1="0" y1="18" x2="100" y2="18" className="chart-loading-line" />
-        )}
+      <svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label={`${candidate.symbol} one week price chart`}>
+        {line ? <><polygon points={`0,32 ${line} 100,32`} /><polyline points={line} /></> : <line x1="0" y1="18" x2="100" y2="18" className="chart-loading-line" />}
       </svg>
-      <div className="chart-source"><span>1M</span><span>{sourceLabel}</span></div>
+      <div className="chart-source"><span>{period}</span><span>{source}</span></div>
     </div>
   );
 }

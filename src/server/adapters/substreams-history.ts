@@ -18,7 +18,9 @@ import {
 const PACKAGE_URL =
 	"https://api.substreams.dev/v1/packages/investmade-robinhood-uniswap-v4/v0.1.1";
 const ENDPOINT = "https://robinhood.substreams.pinax.network";
-const INITIAL_BLOCK = 9070;
+const INITIAL_BLOCK = 9070n;
+// ponytail: ~7 days on Robinhood's current ~100ms block cadence; raise only if the chain cadence changes.
+const WEEKLY_BLOCKS = 6_000_000n;
 const CACHE_MS = 60_000;
 const MAX_POINTS = 80;
 const STREAM_TIMEOUT_MS = 8_000;
@@ -37,6 +39,10 @@ export type SubstreamsEvent = {
 };
 
 export type PricePoint = { timestamp: number; price: number };
+
+export function historyStartBlock(head: bigint): bigint {
+	return head > INITIAL_BLOCK + WEEKLY_BLOCKS ? head - WEEKLY_BLOCKS : INITIAL_BLOCK;
+}
 
 export class SubstreamsHistoryProvider {
 	private cache?: { expiresAt: number; histories: Map<string, PricePoint[]> };
@@ -102,7 +108,7 @@ export class SubstreamsHistoryProvider {
 			substreamPackage: substream,
 			outputModule: "map_events",
 			productionMode: true,
-			startBlockNum: INITIAL_BLOCK,
+			startBlockNum: historyStartBlock(head),
 			stopBlockNum: head + 1n,
 		});
 		const events: SubstreamsEvent[] = [];
