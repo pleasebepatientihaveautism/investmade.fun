@@ -4,11 +4,16 @@ import { formatUnits, type Address, type Hex } from "viem";
 import type { Candidate } from "../../domain/schemas";
 import { formatTicketSizeUsd } from "../../domain/schemas";
 import type { ExecutionRecord, FeedResponse, WalletCall, WeeklySession } from "../api";
-import { api } from "../api";
+import { api, ApiError } from "../api";
+import {
+  executionMatchesReviewBasket,
+  executionPlanHashMatchesReviewBasket,
+  reviewBasketKey,
+} from "../review-safety";
 import { AssetMark } from "./AssetMark";
 import { ArrowRight, Check, Close, Shield } from "./Icons";
 
-const MIN_SIGNING_WINDOW_MS = 10_000;
+const MIN_SIGNING_WINDOW_MS = 30_000;
 
 export function ReviewScreen({
   session,
@@ -18,7 +23,9 @@ export function ReviewScreen({
   onBack,
   onSettled,
   onExecutionChange,
+  onExecutionInvalidated,
   onSessionExpired,
+  onStartAnotherBasket,
   ticketSizeUsd,
   wallet,
   smartWalletReady
@@ -30,62 +37,130 @@ export function ReviewScreen({
   onBack: () => void;
   onSettled: (record: ExecutionRecord) => void;
   onExecutionChange: (record: ExecutionRecord) => void;
+  onExecutionInvalidated: () => void;
   onSessionExpired: () => Promise<{ sessionId: string; assetIds: string[] }>;
+  onStartAnotherBasket: () => void;
   ticketSizeUsd: number;
   wallet: string;
   smartWalletReady: boolean;
 }) {
   const { client: smartWalletClient, getClientForChain } = useSmartWallets();
   const [record, setRecord] = useState<ExecutionRecord>();
+  const [preparedBasketKey, setPreparedBasketKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [phase, setPhase] = useState<"idle" | "refreshing" | "simulating" | "signing" | "settling">("idle");
   const [error, setError] = useState("");
+  const [executionConflict, setExecutionConflict] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const autoPrepareStarted = useRef(false);
+  const preparationAttempt = useRef(0);
   const total = Math.round(selected.length * ticketSizeUsd * 100) / 100;
+  const basket = useMemo(
+    () => ({
+      sessionId: session.id,
+      epochId: session.epochId,
+      selected,
+      ticketSizeUsd,
+      wallet,
+    }),
+    [selected, session.epochId, session.id, ticketSizeUsd, wallet],
+  );
+  const basketKey = reviewBasketKey(basket);
+  const currentBasketKey = useRef(basketKey);
+  currentBasketKey.current = basketKey;
+  const activeRecord =
+    preparedBasketKey === basketKey &&
+    executionMatchesReviewBasket(record, basket)
+      ? record
+      : undefined;
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
-  const quoteExpiry = useMemo(
-    () =>
-      Math.max(
-        0,
-        Math.min(
-          ...(record?.plan.quotes ?? selected.map((item) => item.quote)).map((quote) =>
-            new Date(quote.expiresAt).getTime()
-          )
-        ) - now
-      ),
-    [now, record, selected]
-  );
+  const quoteExpiry = useMemo(() => {
+    const quotes = activeRecord?.plan.quotes ?? selected.map((item) => item.quote);
+    if (!quotes.length) return 0;
+    return Math.max(
+      0,
+      Math.min(...quotes.map((quote) => new Date(quote.expiresAt).getTime())) - now,
+    );
+  }, [activeRecord, now, selected]);
   const quotesFresh = quoteExpiry > 0;
   const quotesSafeToSign = quoteExpiry > MIN_SIGNING_WINDOW_MS;
 
   const prepare = useCallback(async () => {
+    if (!selected.length) {
+      setError("Choose at least one asset before refreshing quotes.");
+      return;
+    }
+    const attempt = ++preparationAttempt.current;
+    const requestedBasketKey = basketKey;
     setLoading(true);
     setPhase("refreshing");
     setError("");
+    setExecutionConflict(false);
     try {
       const prepared = await api.prepareExecution(
         session.id,
         selected.map((item) => item.assetId),
         ticketSizeUsd
       );
+      if (
+        attempt !== preparationAttempt.current ||
+        requestedBasketKey !== currentBasketKey.current
+      ) return;
       setRecord(prepared);
+      setPreparedBasketKey(requestedBasketKey);
       onExecutionChange(prepared);
     } catch (caught) {
+      if (attempt !== preparationAttempt.current) return;
+      const code = caught instanceof ApiError ? caught.code : "";
       const message = caught instanceof Error ? caught.message : "Could not prepare execution";
-      if (message === "SESSION_NOT_FOUND") {
+      if (code === "SESSION_NOT_FOUND") {
         try {
           const recovered = await onSessionExpired();
           const prepared = await api.prepareExecution(recovered.sessionId, recovered.assetIds, ticketSizeUsd);
+          if (attempt !== preparationAttempt.current) return;
           setRecord(prepared);
+          setPreparedBasketKey(
+            reviewBasketKey({
+              ...basket,
+              sessionId: recovered.sessionId,
+              epochId: prepared.plan.epochId,
+              selected: selected.filter((candidate) =>
+                recovered.assetIds.includes(candidate.assetId),
+              ),
+            }),
+          );
           onExecutionChange(prepared);
           setError("");
         } catch (recoveryError) {
           setError(recoveryError instanceof Error ? recoveryError.message : "Could not renew local session");
         }
+      } else if (
+        caught instanceof ApiError &&
+        (code === "EXECUTION_TERMINAL" || code === "EPOCH_ALREADY_EXECUTED")
+      ) {
+        const executionId =
+          typeof caught.details.executionId === "string"
+            ? caught.details.executionId
+            : "";
+        if (executionId) {
+          try {
+            const existing = await api.execution(executionId);
+            if (existing.status !== "PREPARED") {
+              onExecutionChange(existing);
+              onSettled(existing);
+              return;
+            }
+          } catch {
+            // The product recovery below is still actionable if rehydration fails.
+          }
+        }
+        setRecord(undefined);
+        setPreparedBasketKey("");
+        setExecutionConflict(true);
+        setError(message);
       } else {
         setError(message);
       }
@@ -93,19 +168,48 @@ export function ReviewScreen({
       setLoading(false);
       setPhase("idle");
     }
-  }, [onExecutionChange, onSessionExpired, selected, session.id, ticketSizeUsd]);
+  }, [
+    basket,
+    basketKey,
+    onExecutionChange,
+    onSessionExpired,
+    onSettled,
+    selected,
+    session.id,
+    ticketSizeUsd,
+  ]);
 
   useEffect(() => {
-    if (record || autoPrepareStarted.current || !selected.length) return;
+    if (
+      !record ||
+      (preparedBasketKey === basketKey &&
+        executionMatchesReviewBasket(record, basket))
+    ) return;
+    preparationAttempt.current += 1;
+    setRecord(undefined);
+    setPreparedBasketKey("");
+    setError("");
+    setExecutionConflict(false);
+    onExecutionInvalidated();
+  }, [
+    basketKey,
+    basket,
+    onExecutionInvalidated,
+    preparedBasketKey,
+    record,
+  ]);
+
+  useEffect(() => {
+    if (activeRecord || autoPrepareStarted.current || !selected.length) return;
     autoPrepareStarted.current = true;
     void prepare();
-  }, [prepare, record, selected]);
+  }, [activeRecord, prepare, selected]);
 
   async function settleDemo() {
-    if (!record) return;
+    if (!activeRecord) return;
     setLoading(true);
     try {
-      const settled = await api.demoSettle(record.plan.executionId);
+      const settled = await api.demoSettle(activeRecord.plan.executionId);
       setRecord(settled);
       onExecutionChange(settled);
       onSettled(settled);
@@ -116,9 +220,36 @@ export function ReviewScreen({
     }
   }
 
+  function removeAsset(assetId: string) {
+    preparationAttempt.current += 1;
+    setRecord(undefined);
+    setPreparedBasketKey("");
+    setError("");
+    setExecutionConflict(false);
+    onExecutionInvalidated();
+    onRemove(assetId);
+  }
+
   async function confirmLive() {
-    if (!record?.walletCalls?.length || !wallet) {
+    const signingBasketKey = basketKey;
+    if (
+      activeRecord?.status !== "PREPARED" ||
+      !activeRecord.walletCalls?.length ||
+      !wallet ||
+      !selected.length
+    ) {
       setError("No Investmade Wallet or executable calls are available.");
+      return;
+    }
+    if (
+      !quotesSafeToSign ||
+      !(await executionPlanHashMatchesReviewBasket(activeRecord, basket)) ||
+      signingBasketKey !== currentBasketKey.current
+    ) {
+      setRecord(undefined);
+      setPreparedBasketKey("");
+      onExecutionInvalidated();
+      setError("The basket changed after preparation. Refresh quotes before signing.");
       return;
     }
     if (!smartWalletReady) {
@@ -135,7 +266,7 @@ export function ReviewScreen({
       if (!client || client.account.address.toLowerCase() !== wallet.toLowerCase()) {
         throw new Error("SMART_WALLET_ADDRESS_MISMATCH");
       }
-      const calls = record.walletCalls.map(smartWalletCall);
+      const calls = activeRecord.walletCalls.map(smartWalletCall);
       setPhase("simulating");
       await client.prepareUserOperation({ calls });
       setPhase("signing");
@@ -150,14 +281,14 @@ export function ReviewScreen({
         }
       );
       const submitted = await api.markSubmitted(
-        record.plan.executionId,
+        activeRecord.plan.executionId,
         [transactionHash],
         true
       );
       setRecord(submitted);
       onExecutionChange(submitted);
       setPhase("settling");
-      const reconciled = await reconcileUntilTerminal(record.plan.executionId);
+      const reconciled = await reconcileUntilTerminal(activeRecord.plan.executionId);
       setRecord(reconciled);
       onExecutionChange(reconciled);
       onSettled(reconciled);
@@ -199,7 +330,7 @@ export function ReviewScreen({
           {selected.map((candidate) => (
             <div className="ledger-row" key={candidate.assetId}>
               <span className="ledger-asset">
-                <button type="button" onClick={() => onRemove(candidate.assetId)} aria-label={`Remove ${candidate.symbol}`}><Close /></button>
+                <button type="button" onClick={() => removeAsset(candidate.assetId)} aria-label={`Remove ${candidate.symbol}`}><Close /></button>
                 <AssetMark symbol={candidate.symbol} size="sm" />
                 <b>{candidate.symbol}<small>{candidate.name}</small></b>
               </span>
@@ -219,8 +350,12 @@ export function ReviewScreen({
       <aside className="policy-rail">
         <h2>Policy checks</h2>
         {[
-          { label: "Budget within limit", value: `${total} / 100 USDG`, ok: true },
-          { label: "Assets eligible", value: `${selected.length} / ${selected.length}`, ok: true },
+          { label: "Budget within limit", value: `${formatTicketSizeUsd(total)} / 100 USDG`, ok: selected.length > 0 },
+          {
+            label: "Assets eligible",
+            value: selected.length ? `${selected.length} / ${selected.length}` : "No assets selected",
+            ok: selected.length > 0,
+          },
           { label: "Robinhood Chain · 4663", value: "Connected", ok: true },
           {
             label: "Atomic Investmade Wallet",
@@ -249,9 +384,14 @@ export function ReviewScreen({
         </div>
         <div className="wallet-boundary"><Shield /><p><b>One click · all-or-nothing.</b><br />The complete call set is simulated, signed once, and submitted as one atomic basket.</p></div>
         {error && <p className="error-message" role="alert">{error}</p>}
+        {executionConflict ? (
+          <button type="button" className="button button-outline" onClick={onStartAnotherBasket}>
+            Start another basket
+          </button>
+        ) : null}
         <div className="review-actions">
           <button type="button" className="button button-outline" onClick={onBack}>Back to cards</button>
-          {!record ? (
+          {!activeRecord ? (
             <button type="button" className="button button-primary" onClick={prepare} disabled={loading || !selected.length}>
               {loading ? "Refreshing…" : "Refresh quotes & continue"} <ArrowRight />
             </button>
@@ -260,25 +400,25 @@ export function ReviewScreen({
               type="button"
               className="button button-primary"
               onClick={
-                record.status === "SUBMITTED"
+                activeRecord.status === "SUBMITTED"
                   ? resumeReconciliation
                   : !quotesSafeToSign
                     ? prepare
-                  : record.walletCalls?.length
+                  : activeRecord.walletCalls?.length
                     ? confirmLive
                     : settleDemo
               }
-              disabled={loading || record.status === "SETTLED"}
+              disabled={loading || !selected.length || activeRecord.status === "SETTLED"}
             >
-              {record.status === "SETTLED"
+              {activeRecord.status === "SETTLED"
                 ? "Settled"
                 : loading
                   ? phaseLabel(phase)
-                  : record.status === "SUBMITTED"
+                  : activeRecord.status === "SUBMITTED"
                     ? "Check settlement receipt"
                     : !quotesSafeToSign
                       ? "Refresh quotes & continue"
-                    : record.walletCalls?.length
+                    : activeRecord.walletCalls?.length
                     ? "Review and sign"
                     : "Simulate wallet confirmation"} <ArrowRight />
             </button>
@@ -289,7 +429,7 @@ export function ReviewScreen({
       <section className="execution-strip">
         <h2>Execution progress</h2>
         {["Awaiting signature", "Submitted", "Settled"].map((step, index) => {
-          const active = record ? (record.status === "SETTLED" ? index <= 2 : index === 0) : index === 0;
+          const active = activeRecord ? (activeRecord.status === "SETTLED" ? index <= 2 : index === 0) : index === 0;
           return <div className={active ? "execution-step active" : "execution-step"} key={step}><span>{active ? <Check /> : index + 1}</span><b>{step}</b></div>;
         })}
       </section>

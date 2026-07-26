@@ -32,7 +32,7 @@ export function ticketSizeToBaseUnits(ticketSizeUsd: number): bigint {
 }
 
 export function formatTicketSizeUsd(ticketSizeUsd: number): string {
-  return String(Number(ticketSizeUsd.toFixed(2)));
+  return ticketSizeUsd.toFixed(2);
 }
 
 export const quoteSchema = z.object({

@@ -180,6 +180,11 @@ export function Onboarding({
 	}, [authenticated, user?.id]);
 
 	useEffect(() => {
+		if (step === "welcome") return;
+		requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+	}, [step]);
+
+	useEffect(() => {
 		if (step !== "wallet" || !completedPreferences) return;
 		if (!authenticated || !embeddedWallet || !wallet || !smartWalletClient)
 			return;
@@ -281,7 +286,9 @@ export function Onboarding({
 	}
 
 	return (
-		<main className="onboarding-page">
+		<main
+			className={`onboarding-page${step === "welcome" ? "" : " onboarding-focused"}`}
+		>
 			<section className="onboarding-copy">
 				<span className="eyebrow">Your investment plan</span>
 				<h1>Your market swipe, bounded by you.</h1>

@@ -21,7 +21,11 @@ import { PositionsScreen } from "./components/PositionsScreen";
 import { AccountScreen } from "./components/AccountScreen";
 import { AssetIconProvider } from "./components/AssetMark";
 import { Confetti } from "./components/magicui/confetti";
-import type { Candidate, OnboardingPreferences } from "../domain/schemas";
+import {
+	formatTicketSizeUsd,
+	type Candidate,
+	type OnboardingPreferences,
+} from "../domain/schemas";
 import {
 	removeLegacyPreferences,
 	writeAccountPreferences,
@@ -313,25 +317,48 @@ export function App({ config }: { config: PublicConfig }) {
 						}}
 						onSettled={(record) => {
 							setSettlement(record);
-							setReceiptCandidates(selected);
+							setReceiptCandidates(
+								executionCandidates(
+									record,
+									selected,
+									wallet ? readReceiptCandidates(wallet) : [],
+								),
+							);
 							setView("receipts");
 						}}
 						onSessionExpired={recoverReviewSession}
+						onExecutionInvalidated={() => {
+							setSettlement(undefined);
+							if (wallet) {
+								localStorage.removeItem(lastExecutionKey(wallet));
+								localStorage.removeItem(lastExecutionCandidatesKey(wallet));
+							}
+						}}
+						onStartAnotherBasket={() => {
+							if (preferences) void loadSession(preferences);
+						}}
 						ticketSizeUsd={ticketSizeUsd}
 						wallet={wallet}
 						smartWalletReady={smartWalletReady}
 						onExecutionChange={(record) => {
 							setSettlement(record);
-							setReceiptCandidates(selected);
+							const snapshot = executionCandidates(
+								record,
+								selected,
+								wallet ? readReceiptCandidates(wallet) : [],
+							);
+							setReceiptCandidates(snapshot);
 							if (wallet) {
 								localStorage.setItem(
 									lastExecutionKey(wallet),
 									record.plan.executionId,
 								);
-								localStorage.setItem(
-									lastExecutionCandidatesKey(wallet),
-									JSON.stringify(selected),
-								);
+								if (snapshot.length === record.plan.quotes.length) {
+									localStorage.setItem(
+										lastExecutionCandidatesKey(wallet),
+										JSON.stringify(snapshot),
+									);
+								}
 							}
 						}}
 					/>
@@ -402,7 +429,9 @@ export function App({ config }: { config: PublicConfig }) {
 											</span>
 										</button>
 									</div>
-									<div className="card-actions">
+									<div
+										className={`card-actions${selected.length ? " has-selection" : ""}`}
+									>
 										<button
 											type="button"
 											className="button button-skip"
@@ -448,7 +477,7 @@ export function App({ config }: { config: PublicConfig }) {
 									<h2>Your feed is complete.</h2>
 									<p>
 										{selected.length
-											? `${selected.length * ticketSizeUsd} USDG is ready for review.`
+											? `${formatTicketSizeUsd(selected.length * ticketSizeUsd)} USDG is ready for review.`
 											: "You skipped every card. Your USDG stays in your wallet."}
 									</p>
 									<button
@@ -534,4 +563,15 @@ function readReceiptCandidates(wallet: string) {
 	} catch {
 		return [];
 	}
+}
+
+function executionCandidates(
+	record: ExecutionRecord,
+	current: Candidate[],
+	fallback: Candidate[],
+) {
+	const assetIds = new Set(record.plan.quotes.map((quote) => quote.assetId));
+	const selected = current.filter((candidate) => assetIds.has(candidate.assetId));
+	if (selected.length === record.plan.quotes.length) return selected;
+	return fallback.filter((candidate) => assetIds.has(candidate.assetId));
 }

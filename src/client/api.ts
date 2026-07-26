@@ -91,6 +91,17 @@ let authProvider:
     }
   | undefined;
 
+export class ApiError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly details: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export function configureApiAuth(provider: typeof authProvider) {
   authProvider = provider;
 }
@@ -108,8 +119,31 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   });
   const body = await response.json();
-  if (!response.ok) throw new Error(body.message ?? body.error ?? "Request failed");
+  if (!response.ok) {
+    const details =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const code = typeof details.error === "string" ? details.error : "REQUEST_FAILED";
+    const message =
+      typeof details.message === "string"
+        ? details.message
+        : apiErrorMessage(code);
+    throw new ApiError(code, message, details);
+  }
   return body as T;
+}
+
+function apiErrorMessage(code: string) {
+  if (code === "SESSION_NOT_FOUND") return "This basket session expired. Start another basket.";
+  if (code === "EPOCH_ALREADY_EXECUTED") {
+    return "Quotes were prepared for a different basket. Start another basket to change it.";
+  }
+  if (code === "EXECUTION_TERMINAL") {
+    return "This basket has already been submitted. Open its receipt or start another basket.";
+  }
+  if (code === "INVALID_REQUEST") {
+    return "Choose at least one eligible asset before continuing.";
+  }
+  return "The basket could not be prepared. Please try again.";
 }
 
 export const api = {
