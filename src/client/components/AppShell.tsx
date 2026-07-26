@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { WalletCards } from "lucide-react";
-import { UserPill } from "@privy-io/react-auth/ui";
+import { WalletMenu } from "./WalletMenu";
 
 interface Props {
   active: "week" | "positions" | "receipts" | "account";
@@ -44,17 +44,7 @@ export function AppShell({
         </nav>
         {wallet ? (
           <div className="wallet-pill">
-            <UserPill
-              expanded
-              size={40}
-              label={(
-                <span className="wallet-pill-label">
-                  <WalletCards size={17} strokeWidth={1.7} />
-                  {`${wallet.slice(0, 6)}…${wallet.slice(-4)}`}
-                </span>
-              )}
-              ui={{ background: "secondary" }}
-            />
+            <WalletMenu wallet={wallet} />
           </div>
         ) : (
           <button
