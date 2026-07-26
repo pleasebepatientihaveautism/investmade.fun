@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { formatUnits, type Address, type Hex } from "viem";
 import type { Candidate } from "../../domain/schemas";
@@ -7,6 +7,8 @@ import type { ExecutionRecord, FeedResponse, WalletCall, WeeklySession } from ".
 import { api } from "../api";
 import { AssetMark } from "./AssetMark";
 import { ArrowRight, Check, Close, Shield } from "./Icons";
+
+const MIN_SIGNING_WINDOW_MS = 10_000;
 
 export function ReviewScreen({
   session,
@@ -39,6 +41,7 @@ export function ReviewScreen({
   const [phase, setPhase] = useState<"idle" | "refreshing" | "simulating" | "signing" | "settling">("idle");
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const autoPrepareStarted = useRef(false);
   const total = Math.round(selected.length * ticketSizeUsd * 100) / 100;
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -57,8 +60,9 @@ export function ReviewScreen({
     [now, record, selected]
   );
   const quotesFresh = quoteExpiry > 0;
+  const quotesSafeToSign = quoteExpiry > MIN_SIGNING_WINDOW_MS;
 
-  async function prepare() {
+  const prepare = useCallback(async () => {
     setLoading(true);
     setPhase("refreshing");
     setError("");
@@ -89,7 +93,13 @@ export function ReviewScreen({
       setLoading(false);
       setPhase("idle");
     }
-  }
+  }, [onExecutionChange, onSessionExpired, selected, session.id, ticketSizeUsd]);
+
+  useEffect(() => {
+    if (record || autoPrepareStarted.current || !selected.length) return;
+    autoPrepareStarted.current = true;
+    void prepare();
+  }, [prepare, record, selected]);
 
   async function settleDemo() {
     if (!record) return;
@@ -134,7 +144,8 @@ export function ReviewScreen({
         {
           uiOptions: {
             description: `Invest ${formatTicketSizeUsd(total)} USDG into ${selected.length} assets. All purchases succeed or none.`,
-            buttonText: "Sign and invest"
+            buttonText: "Sign and invest",
+            showWalletUIs: false
           }
         }
       );
@@ -217,9 +228,15 @@ export function ReviewScreen({
             ok: smartWalletReady
           },
           {
-            label: quotesFresh ? "Quotes fresh" : "Preview expired",
-            value: quotesFresh ? `${Math.ceil(quoteExpiry / 1000)}s` : "Refresh required",
-            ok: quotesFresh
+            label: quotesSafeToSign
+              ? "Quotes fresh"
+              : quotesFresh
+                ? "Quote nearly expired"
+                : "Preview expired",
+            value: quotesSafeToSign
+              ? `${Math.ceil(quoteExpiry / 1000)}s`
+              : "Refresh required",
+            ok: quotesSafeToSign
           }
         ].map(({ label, value, ok }) => (
           <div className="policy-row" key={label}><span className={ok ? "check-circle" : "check-circle warning-circle"}>{ok ? <Check /> : "!"}</span><b>{label}</b><em>{value}</em></div>
@@ -230,7 +247,7 @@ export function ReviewScreen({
           <p><span>Input commitment</span><b>{shortHash(feed.proof.inputCommitment)}</b></p>
           <p><span>TEE verified</span><b>{feed.proof.teeVerified ? "Verified" : "Not available in demo"}</b></p>
         </div>
-        <div className="wallet-boundary"><Shield /><p><b>One approval · all-or-nothing.</b><br />The complete call set is simulated before Privy opens the signing prompt.</p></div>
+        <div className="wallet-boundary"><Shield /><p><b>One click · all-or-nothing.</b><br />The complete call set is simulated, signed once, and submitted as one atomic basket.</p></div>
         {error && <p className="error-message" role="alert">{error}</p>}
         <div className="review-actions">
           <button type="button" className="button button-outline" onClick={onBack}>Back to cards</button>
@@ -245,7 +262,7 @@ export function ReviewScreen({
               onClick={
                 record.status === "SUBMITTED"
                   ? resumeReconciliation
-                  : !quotesFresh
+                  : !quotesSafeToSign
                     ? prepare
                   : record.walletCalls?.length
                     ? confirmLive
@@ -259,7 +276,7 @@ export function ReviewScreen({
                   ? phaseLabel(phase)
                   : record.status === "SUBMITTED"
                     ? "Check settlement receipt"
-                    : !quotesFresh
+                    : !quotesSafeToSign
                       ? "Refresh quotes & continue"
                     : record.walletCalls?.length
                     ? "Review and sign"
