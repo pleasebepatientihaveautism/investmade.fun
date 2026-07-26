@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { WalletCards } from "lucide-react";
+import { UserPill } from "@privy-io/react-auth/ui";
 
 interface Props {
   active: "week" | "positions" | "receipts" | "account";
@@ -41,23 +42,41 @@ export function AppShell({
             </button>
           ))}
         </nav>
-        <button
-          type="button"
-          className="wallet-button"
-          onClick={onWallet}
-          disabled={!walletReady}
-          aria-label={wallet ? "Disconnect Privy wallet" : "Connect wallet with Privy"}
-          title={wallet ? "Disconnect Privy wallet" : "Connect wallet with Privy"}
-        >
-          <WalletCards size={17} strokeWidth={1.7} />
-          {wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : "Connect wallet"}
-        </button>
+        {wallet ? (
+          <div className="wallet-pill">
+            <UserPill
+              expanded
+              size={40}
+              label={(
+                <span className="wallet-pill-label">
+                  <WalletCards size={17} strokeWidth={1.7} />
+                  {`${wallet.slice(0, 6)}…${wallet.slice(-4)}`}
+                </span>
+              )}
+              ui={{ background: "secondary" }}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="wallet-button"
+            onClick={onWallet}
+            disabled={!walletReady}
+            aria-label="Connect wallet with Privy"
+            title="Connect wallet with Privy"
+          >
+            <WalletCards size={17} strokeWidth={1.7} />
+            Connect wallet
+          </button>
+        )}
       </header>
       {children}
       <footer className="logo-attribution">
         <a href="https://www.coingecko.com/en/api">Crypto icons by CoinGecko</a>
         <span> · </span>
-        <a href="https://www.allinvestview.com/tools/ticker-logos/">Stock logos by AllInvestView</a>
+        <a href="https://logo.dev">Logos provided by Logo.dev</a>
+        <span> · </span>
+        <a href="https://www.allinvestview.com/tools/ticker-logos/">Fallback logos by AllInvestView</a>
       </footer>
     </div>
   );

@@ -3,6 +3,7 @@ import { STOCK_LOGO_DOMAINS } from "../../domain/constants";
 import { api } from "../api";
 
 const TICKER_LOGO_CDN = "https://cdn.tickerlogos.com";
+const LOGO_DEV_PUBLISHABLE_KEY = "pk_Vd4Z_uMzQJCMUA21nk_6Gw";
 const AssetIconsContext = createContext<Record<string, string>>({});
 
 export function AssetIconProvider({ children }: { children: ReactNode }) {
@@ -22,12 +23,18 @@ export function AssetIconProvider({ children }: { children: ReactNode }) {
 }
 
 function AssetLogo({ iconUrl, domain, symbol }: { iconUrl?: string; domain?: string; symbol: string }) {
-  const initialSource = iconUrl ? "coingecko" : domain ? "allinvest" : "letter";
-  const [source, setSource] = useState<"coingecko" | "allinvest" | "letter">(initialSource);
+  const initialSource = domain ? "logoDev" : iconUrl ? "coingecko" : "letter";
+  const [source, setSource] = useState<"coingecko" | "logoDev" | "allinvest" | "letter">(initialSource);
 
-  useEffect(() => setSource(iconUrl ? "coingecko" : domain ? "allinvest" : "letter"), [iconUrl, domain]);
+  useEffect(() => setSource(domain ? "logoDev" : iconUrl ? "coingecko" : "letter"), [iconUrl, domain]);
 
-  const imageUrl = source === "coingecko" ? iconUrl : source === "allinvest" && domain ? `${TICKER_LOGO_CDN}/${domain}` : undefined;
+  const imageUrl = source === "logoDev"
+    ? `https://img.logo.dev/ticker/${encodeURIComponent(symbol.toUpperCase())}?token=${LOGO_DEV_PUBLISHABLE_KEY}&size=128&format=png&theme=light&retina=true&fallback=404`
+    : source === "coingecko"
+      ? iconUrl
+      : source === "allinvest" && domain
+        ? `${TICKER_LOGO_CDN}/${domain}`
+        : undefined;
 
   if (!imageUrl) return <span aria-hidden="true">{symbol === "WETH" ? "◆" : symbol.slice(0, 1)}</span>;
 
@@ -35,7 +42,7 @@ function AssetLogo({ iconUrl, domain, symbol }: { iconUrl?: string; domain?: str
     <img
       src={imageUrl}
       alt={`${symbol} logo`}
-      onError={() => setSource(source === "coingecko" && domain ? "allinvest" : "letter")}
+      onError={() => setSource(source === "logoDev" && domain ? "allinvest" : "letter")}
     />
   );
 }

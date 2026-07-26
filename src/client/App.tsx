@@ -25,7 +25,7 @@ const LAST_EXECUTION_KEY = "investmade:last-execution";
 const LAST_EXECUTION_CANDIDATES_KEY = "investmade:last-execution-candidates";
 
 export function App({ config }: { config: PublicConfig }) {
-  const { authenticated, getAccessToken, login, logout, ready: privyReady, user } = usePrivy();
+  const { authenticated, getAccessToken, login, ready: privyReady, user } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
   const { client: smartWalletClient } = useSmartWallets();
   const fundingWallet = authenticated
@@ -195,7 +195,7 @@ export function App({ config }: { config: PublicConfig }) {
       active={view}
       onNavigate={navigate}
       wallet={displayWallet}
-      onWallet={authenticated ? logout : login}
+      onWallet={login}
       walletReady={privyReady}
     >
       {stage === "onboarding" ? (

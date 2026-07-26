@@ -51,6 +51,10 @@ function Root() {
       appId={config.privy.appId}
       config={{
         loginMethods: ["email", "wallet"],
+        appearance: {
+          theme: "light",
+          accentColor: "#baff00"
+        },
         defaultChain: robinhoodChain,
         supportedChains: [robinhoodChain],
         embeddedWallets: {
