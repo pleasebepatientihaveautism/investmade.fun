@@ -134,6 +134,27 @@ KILL_TEST_SYMBOL=AAPL npm run verify:uniswap
 
 No transaction was broadcast during these kill tests.
 
+## Uniswap prize verification map
+
+Uniswap is the core execution dependency, not an optional integration:
+
+- [`UniswapProvider.prepare`](./src/server/adapters/uniswap.ts#L9-L58) builds the complete basket
+  from fresh quotes, Permit2 calls, approvals, and swap transactions.
+- [`UniswapProvider.prepareExit`](./src/server/adapters/uniswap.ts#L60-L103) prepares fresh
+  asset-to-USDG exit routes.
+- [`UniswapProvider.permissionAllowed`](./src/server/adapters/uniswap.ts#L105-L119) checks whether
+  the authenticated wallet may trade a tokenized stock.
+- [`UniswapProvider.quotePairRaw`](./src/server/adapters/uniswap.ts#L148-L191) requests exact-input
+  routes across Uniswap v2, v3, and v4 on Robinhood Chain.
+- [`UniswapProvider.approvalCalls`](./src/server/adapters/uniswap.ts#L223-L258) requests required
+  approval reset and approval transactions.
+- [`UniswapProvider.swap`](./src/server/adapters/uniswap.ts#L260-L279) converts a quote into
+  wallet-ready swap calldata.
+- [`scripts/verify-uniswap.mjs`](./scripts/verify-uniswap.mjs) runs the read-only WETH, AAPL, or
+  TSLA integration kill test without broadcasting a transaction.
+- [`FEEDBACK.md`](./FEEDBACK.md) documents the integration experience and requested API
+  improvements for the Uniswap Developer Feedback Form.
+
 ## Production blockers that still require operator credentials/funds
 
 Code completeness is not mainnet readiness. Before public launch, the operator must provide and verify:
