@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { DemoProvider } from "../src/server/adapters/demo.js";
 import { sha256 } from "../src/domain/canonical.js";
-import { DEFAULT_BUDGET, feedInputSchema, feedOutputSchema } from "../src/domain/schemas.js";
+import {
+  budgetForTicket,
+  DEFAULT_BUDGET,
+  feedInputSchema,
+  feedOutputSchema
+} from "../src/domain/schemas.js";
 import { PolicyError, eligibleCandidates, validateFeed } from "../src/domain/policy.js";
 
 describe("deterministic feed policy", () => {
@@ -75,7 +80,10 @@ describe("deterministic feed policy", () => {
     );
   });
 
-  it("rejects more than ten model cards at the schema boundary", () => {
+  it("derives basket capacity from the period budget instead of a fixed card cap", () => {
+    expect(budgetForTicket(0.1).maxCards).toBe(1000);
+    expect(budgetForTicket(25).maxCards).toBe(4);
+
     const card = {
       assetId: "rh:4663:WETH",
       action: "BUY",
@@ -94,6 +102,6 @@ describe("deterministic feed policy", () => {
       cards: Array.from({ length: 11 }, (_, index) => ({ ...card, rank: index + 1 })),
       warnings: []
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });

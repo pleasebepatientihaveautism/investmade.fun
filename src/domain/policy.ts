@@ -1,6 +1,5 @@
 import {
   ASSET_REGISTRY,
-  MAX_CARDS,
   MAX_PRICE_IMPACT_BPS,
   PERIOD_BUDGET,
   POLICY_VERSION,
@@ -94,7 +93,21 @@ export function validateExecutionSelection(
   candidates: Candidate[],
   now = new Date()
 ): void {
+  validateExecutionAssets(request, candidates);
   const eligible = new Set(eligibleCandidates(candidates, now).map((candidate) => candidate.assetId));
+
+  for (const selection of request.selections) {
+    if (!eligible.has(selection.assetId)) {
+      throw new PolicyError("ASSET_NOT_ELIGIBLE", `${selection.assetId} is not currently executable.`);
+    }
+  }
+}
+
+export function validateExecutionAssets(
+  request: ExecutionRequest,
+  candidates: Candidate[]
+): void {
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.assetId, candidate]));
   const seen = new Set<string>();
   let total = 0n;
   const slot = BigInt(request.selections[0]?.amountInBaseUnits ?? "0");
@@ -105,7 +118,16 @@ export function validateExecutionSelection(
   }
 
   for (const selection of request.selections) {
-    if (!eligible.has(selection.assetId)) {
+    const candidate = candidatesById.get(selection.assetId);
+    const registered = registryById.get(selection.assetId);
+    if (
+      !candidate ||
+      !registered ||
+      registered.address.toLowerCase() !== candidate.contract.toLowerCase() ||
+      !candidate.eligible ||
+      !candidate.marketHealthy ||
+      !candidate.permissionAllowed
+    ) {
       throw new PolicyError("ASSET_NOT_ELIGIBLE", `${selection.assetId} is not currently executable.`);
     }
     if (seen.has(selection.assetId)) {
@@ -118,17 +140,18 @@ export function validateExecutionSelection(
     total += BigInt(selection.amountInBaseUnits);
   }
 
-  if (request.selections.length > MAX_CARDS || total > PERIOD_BUDGET) {
+  if (total > PERIOD_BUDGET) {
     throw new PolicyError("BUDGET_EXCEEDED", "Execution exceeds the period budget.");
   }
 }
 
 export function policyHash(slotBudgetBaseUnits: string): `sha256:${string}` {
+  const slotBudget = BigInt(slotBudgetBaseUnits);
   return sha256({
     policyVersion: POLICY_VERSION,
     periodBudget: PERIOD_BUDGET.toString(),
     slotBudget: slotBudgetBaseUnits,
-    maxCards: MAX_CARDS,
+    maxCards: slotBudget > 0n ? Number(PERIOD_BUDGET / slotBudget) : 0,
     maxPriceImpactBps: MAX_PRICE_IMPACT_BPS
   });
 }

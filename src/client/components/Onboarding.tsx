@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { IDKit, orbLegacy } from "@worldcoin/idkit-core";
-import { MAX_CARDS } from "../../domain/constants";
 import {
 	isTicketSizeUsd,
 	type OnboardingPreferences,
@@ -734,7 +733,7 @@ function PlanSummary({
 			</p>
 			<p>
 				<span>Period limit</span>
-				<b>100 USDG · up to {maxCardsFor(preferences.ticketSizeUsd)} cards</b>
+				<b>100 USDG total · no fixed card limit</b>
 			</p>
 			<p>
 				<span>Risk mode</span>
@@ -838,10 +837,6 @@ function customTicket(value: string): number | undefined {
 
 function isPresetTicket(value: number): value is 2 | 10 | 25 {
 	return value === 2 || value === 10 || value === 25;
-}
-
-function maxCardsFor(ticketSizeUsd: number) {
-	return Math.min(MAX_CARDS, Math.floor(100 / ticketSizeUsd));
 }
 
 function cadenceLabel(cadence: OnboardingPreferences["cadence"]) {

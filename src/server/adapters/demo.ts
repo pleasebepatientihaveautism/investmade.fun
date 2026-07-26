@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, MAX_CARDS } from "../../domain/constants.js";
+import { ASSET_REGISTRY, DEFAULT_SLOT_BUDGET, FEED_PAGE_SIZE } from "../../domain/constants.js";
 import { sha256 } from "../../domain/canonical.js";
 import { unitPriceUsdFromQuote } from "../../domain/price.js";
 import type { Candidate, ExecutionRequest, FeedInput, FeedOutput } from "../../domain/schemas.js";
@@ -19,7 +19,9 @@ const outputs: Record<string, string> = {
   AAPL: "29780000000000000",
   RDDT: "47890000000000000",
   MSFT: "22200000000000000",
-  TSLA: "30780000000000000"
+  TSLA: "30780000000000000",
+  COST: "10000000000000000",
+  MU: "200000000000000000"
 };
 const demoMeta: Record<string, { priceImpactBps: number; crowdScoreBps: number; reason: string }> = {
   WETH: {
@@ -71,6 +73,16 @@ const demoMeta: Record<string, { priceImpactBps: number; crowdScoreBps: number; 
     priceImpactBps: 18,
     crowdScoreBps: 4_480,
     reason: "Active market state and a fresh route within the policy limit."
+  },
+  COST: {
+    priceImpactBps: 22,
+    crowdScoreBps: 4_370,
+    reason: "Eligible consumer exposure with a current executable route."
+  },
+  MU: {
+    priceImpactBps: 25,
+    crowdScoreBps: 4_260,
+    reason: "Eligible semiconductor exposure with a current executable route."
   }
 };
 
@@ -81,12 +93,17 @@ export class DemoProvider
     _wallet: string,
     amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
     now = new Date(),
-    limit = MAX_CARDS
+    limit = FEED_PAGE_SIZE,
+    excludedAssetIds: string[] = []
   ): Promise<Candidate[]> {
+    const excluded = new Set(excludedAssetIds);
     const expiresAt = new Date(now.getTime() + 60_000).toISOString();
     const amount = BigInt(amountInBaseUnits);
     return Object.values(ASSET_REGISTRY)
-      .filter((asset) => Boolean(outputs[asset.symbol] && demoMeta[asset.symbol]))
+      .filter((asset) =>
+        Boolean(outputs[asset.symbol] && demoMeta[asset.symbol]) &&
+        !excluded.has(asset.assetId)
+      )
       .slice(0, limit)
       .map((asset) => {
       const baseEstimate = outputs[asset.symbol];
@@ -127,8 +144,19 @@ export class DemoProvider
     });
   }
 
+  async getCandidatesForExecution(
+    wallet: string,
+    assetIds: string[],
+    amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
+    now = new Date()
+  ): Promise<Candidate[]> {
+    const selected = new Set(assetIds);
+    return (await this.getCandidates(wallet, amountInBaseUnits, now, Object.keys(outputs).length))
+      .filter((candidate) => selected.has(candidate.assetId));
+  }
+
   async generate(input: FeedInput, candidates: Candidate[]) {
-    const cards = candidates.slice(0, MAX_CARDS).map((candidate, index) => ({
+    const cards = candidates.map((candidate, index) => ({
       assetId: candidate.assetId,
       action: "BUY" as const,
       rank: index + 1,
@@ -159,12 +187,10 @@ export class DemoProvider
     };
   }
 
-  async prepare(_wallet: string, request: ExecutionRequest, _candidates: Candidate[]) {
-    const amountInBaseUnits = request.selections[0]?.amountInBaseUnits;
-    const current = await this.getCandidates("demo", amountInBaseUnits);
+  async prepare(_wallet: string, request: ExecutionRequest, candidates: Candidate[]) {
     const selected = new Set(request.selections.map((selection) => selection.assetId));
     return {
-      quotes: current
+      quotes: candidates
       .filter((candidate) => selected.has(candidate.assetId))
       .map((candidate) => candidate.quote),
       walletCalls: []

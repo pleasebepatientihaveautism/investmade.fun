@@ -58,6 +58,7 @@ describe("core API flow", () => {
 			.expect(200);
 		expect(feed.body.feed.cards).toHaveLength(10);
 		expect(feed.body.candidates).toHaveLength(10);
+		expect(feed.body.hasMore).toBe(true);
 		expect(feed.body.candidates[0].quote.unitPriceUsd).toBe("3212.335367");
 		expect(feed.body.proof.teeVerified).toBe(false);
 
@@ -170,6 +171,41 @@ describe("core API flow", () => {
 		expect(feed.body.feed.cards).toHaveLength(5);
 	});
 
+	it("continues the feed past ten cards without creating a new basket", async () => {
+		const app = testApp();
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "weekly" })
+			.expect(200);
+		const first = await request(app)
+			.post(`/api/sessions/${opened.body.id}/feed`)
+			.send(onboardingPreferences)
+			.expect(200);
+		const next = await request(app)
+			.post(`/api/sessions/${opened.body.id}/feed`)
+			.send({
+				...onboardingPreferences,
+				excludedAssetIds: first.body.candidates.map(
+					(candidate: { assetId: string }) => candidate.assetId,
+				),
+			})
+			.expect(200);
+
+		expect(next.body.candidates).toHaveLength(2);
+		expect(next.body.feed.cards).toHaveLength(2);
+		expect(next.body.hasMore).toBe(false);
+		expect(
+			new Set([
+				...first.body.candidates.map(
+					(candidate: { assetId: string }) => candidate.assetId,
+				),
+				...next.body.candidates.map(
+					(candidate: { assetId: string }) => candidate.assetId,
+				),
+			]).size,
+		).toBe(12);
+	});
+
 	it("drops a quote that expired during candidate discovery before inference", async () => {
 		const provider = new DemoProvider();
 		const candidates: CandidateProvider = {
@@ -188,6 +224,8 @@ describe("core API flow", () => {
 					...generated.slice(1),
 				];
 			},
+			getCandidatesForExecution: (...args) =>
+				provider.getCandidatesForExecution(...args),
 		};
 		const app = createApp({
 			config: loadConfig({
@@ -314,6 +352,10 @@ describe("core API flow", () => {
 					candidateRequests += 1;
 					return provider.getCandidates(...args);
 				},
+				async getCandidatesForExecution(...args) {
+					candidateRequests += 1;
+					return provider.getCandidatesForExecution(...args);
+				},
 			},
 			inference: provider,
 			execution: {
@@ -359,6 +401,58 @@ describe("core API flow", () => {
 		);
 		expect(candidateRequests).toBe(requestsBeforeRetry);
 		expect(executionPreparations).toBe(preparationsBeforeRetry);
+	});
+
+	it("prepares only the selected assets and exposes stage timing", async () => {
+		const provider = new DemoProvider();
+		const executionRequests: string[][] = [];
+		const app = createApp({
+			config: loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "true",
+				PUBLIC_ORIGIN: "http://localhost:5173",
+				SESSION_SECRET: "test-secret-that-is-at-least-32-characters",
+				PRIVY_APP_ID: "test-privy-app-id",
+				PRIVY_APP_SECRET: "test-privy-app-secret",
+			}),
+			store: new MemoryStateStore(),
+			candidates: {
+				getCandidates: (...args) => provider.getCandidates(...args),
+				async getCandidatesForExecution(wallet, assetIds, amount, now) {
+					executionRequests.push(assetIds);
+					return provider.getCandidatesForExecution(
+						wallet,
+						assetIds,
+						amount,
+						now,
+					);
+				},
+			},
+			inference: provider,
+			execution: provider,
+		});
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "weekly" })
+			.expect(200);
+		const prepared = await request(app)
+			.post("/api/executions/prepare")
+			.send({
+				sessionId: opened.body.id,
+				chainId: 4663,
+				inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+				selections: [
+					{ assetId: "rh:4663:WETH", amountInBaseUnits: "100000" },
+				],
+				slippageBps: 50,
+			})
+			.expect(200);
+
+		expect(executionRequests).toEqual([["rh:4663:WETH"]]);
+		expect(prepared.body.plan.quotes).toHaveLength(1);
+		expect(prepared.headers["server-timing"]).toMatch(
+			/session;dur=.*candidates;dur=.*execution;dur=.*store;dur=.*total;dur=/,
+		);
 	});
 
 	it("keeps a supported exit reachable outside the weekly execution path", async () => {

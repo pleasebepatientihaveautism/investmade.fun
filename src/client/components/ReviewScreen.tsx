@@ -478,7 +478,7 @@ async function reconcileUntilTerminal(executionId: string): Promise<ExecutionRec
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const record = await api.reconcile(executionId);
     if (["SETTLED", "PARTIAL", "FAILED"].includes(record.status)) return record;
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    await new Promise((resolve) => setTimeout(resolve, attempt < 12 ? 500 : 1_500));
   }
   throw new Error("Transactions are submitted but not terminal yet. Check Receipts shortly.");
 }

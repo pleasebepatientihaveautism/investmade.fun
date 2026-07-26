@@ -4,6 +4,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import {
 	api,
+	ApiError,
 	configureApiAuth,
 	type ExecutionRecord,
 	type FeedResponse,
@@ -34,8 +35,6 @@ import {
 type View = "week" | "positions" | "receipts" | "account";
 type Stage = "loading" | "onboarding" | "swipe" | "review";
 type DecisionFeedback = "invest" | "skip";
-const DEV_CARD_LIMIT_KEY = "investmade:dev-card-limit";
-const DEV_CARD_LIMIT_MAX = 10;
 const LAST_EXECUTION_KEY = "investmade:last-execution";
 const LAST_EXECUTION_CANDIDATES_KEY = "investmade:last-execution-candidates";
 
@@ -78,9 +77,7 @@ export function App({ config }: { config: PublicConfig }) {
 	const [receiptCandidates, setReceiptCandidates] = useState<Candidate[]>([]);
 	const [error, setError] = useState("");
 	const [decisionFeedback, setDecisionFeedback] = useState<DecisionFeedback>();
-	const [devCardLimit, setDevCardLimit] = useState(() =>
-		readDevCardLimit(DEV_CARD_LIMIT_MAX),
-	);
+	const [loadingMore, setLoadingMore] = useState(false);
 	const decisionTimer = useRef<number | undefined>(undefined);
 	const wallet = smartWalletAddress?.toLowerCase() ?? "";
 	const fundingWalletAddress = fundingWallet?.address.toLowerCase() ?? "";
@@ -131,11 +128,7 @@ export function App({ config }: { config: PublicConfig }) {
 			setStage("loading");
 			try {
 				const opened = await api.openSession(preferences.cadence);
-				const generated = await api.generateFeed(
-					opened.id,
-					preferences,
-					devCardLimit,
-				);
+				const generated = await api.generateFeed(opened.id, preferences);
 				setPreferences(preferences);
 				setSession(opened);
 				setFeed(generated);
@@ -151,7 +144,7 @@ export function App({ config }: { config: PublicConfig }) {
 				setStage("swipe");
 			}
 		},
-		[devCardLimit],
+		[],
 	);
 
 	useEffect(() => {
@@ -176,33 +169,19 @@ export function App({ config }: { config: PublicConfig }) {
 		[],
 	);
 
-	const feedCandidates = feed?.candidates ?? [];
-	const candidates =
-		config.executionMode === "local-live"
-			? feedCandidates.slice(0, devCardLimit)
-			: feedCandidates;
+	const candidates = feed?.candidates ?? [];
 	const current = candidates[index];
 	const selected = candidates.filter((candidate) =>
 		selectedIds.includes(candidate.assetId),
 	);
 	const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
 	const cadence = preferences?.cadence ?? "weekly";
-	const maxCards = Math.min(config.maxCards, Math.floor(100 / ticketSizeUsd));
-
-	function changeDevCardLimit(next: number) {
-		const limit = Math.max(1, Math.min(DEV_CARD_LIMIT_MAX, Math.floor(next)));
-		setDevCardLimit(limit);
-		localStorage.setItem(DEV_CARD_LIMIT_KEY, String(limit));
-	}
+	const maxSelections = Math.floor(100 / ticketSizeUsd);
 
 	const recoverReviewSession = useCallback(async () => {
 		if (!preferences) throw new Error("PREFERENCES_REQUIRED");
 		const opened = await api.openSession(preferences.cadence);
-		const generated = await api.generateFeed(
-			opened.id,
-			preferences,
-			devCardLimit,
-		);
+		const generated = await api.generateFeed(opened.id, preferences);
 		const available = new Set(
 			generated.candidates.map((candidate) => candidate.assetId),
 		);
@@ -216,14 +195,76 @@ export function App({ config }: { config: PublicConfig }) {
 		setFeed(generated);
 		setSelectedIds(assetIds);
 		return { sessionId: opened.id, assetIds };
-	}, [devCardLimit, preferences, selectedIds]);
+	}, [preferences, selectedIds]);
+
+	const loadMoreCandidates = useCallback(async () => {
+		if (!feed?.hasMore || !preferences || !session || loadingMore) return;
+		setLoadingMore(true);
+		try {
+			const next = await api.generateFeed(
+				session.id,
+				preferences,
+				feed.candidates.map((candidate) => candidate.assetId),
+			);
+			setFeed((currentFeed) => {
+				if (!currentFeed) return next;
+				const rankOffset = currentFeed.feed.cards.length;
+				return {
+					...next,
+					candidates: [...currentFeed.candidates, ...next.candidates],
+					feed: {
+						...next.feed,
+						cards: [
+							...currentFeed.feed.cards,
+							...next.feed.cards.map((card, cardIndex) => ({
+								...card,
+								rank: rankOffset + cardIndex + 1,
+							})),
+						],
+					},
+				};
+			});
+		} catch (caught) {
+			if (
+				caught instanceof ApiError &&
+				caught.code !== "NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES"
+			) {
+				console.error("Could not load the next feed page", caught);
+			}
+			setFeed((currentFeed) =>
+				currentFeed ? { ...currentFeed, hasMore: false } : currentFeed,
+			);
+		} finally {
+			setLoadingMore(false);
+		}
+	}, [feed, loadingMore, preferences, session]);
+
+	useEffect(() => {
+		if (
+			!feed?.hasMore ||
+			loadingMore ||
+			index < Math.max(0, candidates.length - 3) ||
+			selectedIds.length >= maxSelections
+		) {
+			return;
+		}
+		void loadMoreCandidates();
+	}, [
+		candidates.length,
+		feed?.hasMore,
+		index,
+		loadMoreCandidates,
+		loadingMore,
+		maxSelections,
+		selectedIds.length,
+	]);
 
 	function decide(add: boolean) {
 		if (!current) return;
 		if (
 			add &&
 			!selectedIds.includes(current.assetId) &&
-			selectedIds.length < maxCards
+			selectedIds.length < maxSelections
 		) {
 			setSelectedIds((ids) => [...ids, current.assetId]);
 		}
@@ -300,9 +341,6 @@ export function App({ config }: { config: PublicConfig }) {
 						smartWalletReady={smartWalletReady}
 						preferences={preferences}
 						developerMode={config.executionMode === "local-live"}
-						devCardLimit={devCardLimit}
-						maxDevCards={DEV_CARD_LIMIT_MAX}
-						onDevCardLimitChange={changeDevCardLimit}
 						onResetDemoWeek={async () => {
 							await loadSession(preferences);
 							setView("week");
@@ -406,7 +444,7 @@ export function App({ config }: { config: PublicConfig }) {
 							) : stage === "loading" || !feed ? (
 								<div className="loading-state">
 									<span />
-									<h2>Building your private feed</h2>
+									<h2>Building your personal feed</h2>
 									<p>Checking executable routes and deterministic policy.</p>
 								</div>
 							) : current ? (
@@ -478,6 +516,12 @@ export function App({ config }: { config: PublicConfig }) {
 										</button>
 									</div>
 								</>
+							) : loadingMore ? (
+								<div className="loading-state loading-more">
+									<span />
+									<h2>Finding more assets…</h2>
+									<p>Your selected basket stays ready to review.</p>
+								</div>
 							) : (
 								<div className="feed-complete">
 									{selected.length ? (
@@ -517,7 +561,6 @@ export function App({ config }: { config: PublicConfig }) {
 							executionMode={config.executionMode}
 							ticketSizeUsd={ticketSizeUsd}
 							cadence={cadence}
-							maxCards={maxCards}
 						/>
 						<section className="trust-strip">
 							<Shield />
@@ -544,13 +587,6 @@ export function App({ config }: { config: PublicConfig }) {
 
 function scrollToTop() {
 	window.scrollTo({ top: 0, behavior: "auto" });
-}
-
-function readDevCardLimit(maxCards: number) {
-	const saved = Number(localStorage.getItem(DEV_CARD_LIMIT_KEY));
-	return Number.isInteger(saved) && saved >= 1 && saved <= maxCards
-		? saved
-		: maxCards;
 }
 
 function lastExecutionKey(wallet: string) {

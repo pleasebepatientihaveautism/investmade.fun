@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import express, {
 	type NextFunction,
 	type Request,
@@ -23,7 +24,7 @@ import { DEFAULT_BUDGET } from "../domain/schemas.js";
 import { sha256 } from "../domain/canonical.js";
 import { executionIntent } from "../domain/execution-intent.js";
 import {
-	MAX_CARDS,
+	FEED_PAGE_SIZE,
 	POLICY_VERSION,
 	USDG_ADDRESS,
 	USDG_DECIMALS,
@@ -32,6 +33,7 @@ import {
 	eligibleCandidates,
 	policyHash,
 	PolicyError,
+	validateExecutionAssets,
 	validateExecutionSelection,
 	validateFeed,
 } from "../domain/policy.js";
@@ -297,6 +299,7 @@ export function createApp(deps: AppDependencies) {
 		"/api/sessions/:sessionId/feed",
 		requireWallet,
 		async (request, response) => {
+			const timing = serverTiming("feed", deps.config.NODE_ENV !== "test");
 			const session = await deps.store.getSession(
 				String(request.params.sessionId),
 			);
@@ -314,31 +317,37 @@ export function createApp(deps: AppDependencies) {
 			const submittedPreferences = onboardingPreferencesSchema.parse(
 				request.body,
 			);
+			const budget = budgetForTicket(submittedPreferences.ticketSizeUsd);
 			const candidateLimit = z
 				.number()
 				.int()
 				.min(1)
-				.max(MAX_CARDS)
+				.max(FEED_PAGE_SIZE)
 				.optional()
-				.parse(request.body?.candidateLimit);
+				.parse(request.body?.candidateLimit) ?? FEED_PAGE_SIZE;
+			const excludedAssetIds = z
+				.array(z.string().min(1))
+				.optional()
+				.parse(request.body?.excludedAssetIds) ?? [];
 			const { riskDisclosureAccepted: _accepted, ...preferences } =
 				submittedPreferences;
-			const budget = budgetForTicket(preferences.ticketSizeUsd);
+			timing.mark("session");
 			const generatedCandidates = await deps.candidates.getCandidates(
 				response.locals.wallet,
 				budget.slotBudgetBaseUnits,
 				undefined,
 				candidateLimit,
+				excludedAssetIds,
 			);
-			// Live candidate discovery quotes assets serially to stay within Uniswap's
-			// rate limit. By the time a ten-card local preview is ready, an early quote
-			// can have expired. Apply the exact policy gate before inference so the AI
-			// can never rank a card that validateFeed will immediately reject.
+			timing.mark("candidates");
+			// Candidate discovery uses bounded concurrency. Apply the exact policy
+			// gate before inference so the AI can never rank a card that expired
+			// while the rest of the feed was being assembled.
 			const candidates = eligibleCandidates(
 				generatedCandidates.filter((candidate) =>
 					preferences.assetClasses.includes(candidate.kind),
 				),
-			).slice(0, candidateLimit ?? budget.maxCards);
+			).slice(0, Math.min(candidateLimit, budget.maxCards));
 			if (!candidates.length) {
 				response
 					.status(422)
@@ -360,7 +369,14 @@ export function createApp(deps: AppDependencies) {
 			});
 			const generated = await deps.inference.generate(input, candidates);
 			const output = validateFeed(generated.output, input, candidates);
-			response.json({ candidates, feed: output, proof: generated.receipt });
+			timing.mark("inference");
+			timing.apply(response);
+			response.json({
+				candidates,
+				feed: output,
+				proof: generated.receipt,
+				hasMore: generatedCandidates.length === candidateLimit,
+			});
 		},
 	);
 
@@ -368,6 +384,7 @@ export function createApp(deps: AppDependencies) {
 		"/api/executions/prepare",
 		requireWallet,
 		async (request, response) => {
+			const timing = serverTiming("prepare", deps.config.NODE_ENV !== "test");
 			const parsed = executionRequestSchema.parse(request.body);
 			const session = await deps.store.getSession(parsed.sessionId);
 			if (!session || session.wallet !== response.locals.wallet) {
@@ -406,6 +423,7 @@ export function createApp(deps: AppDependencies) {
 					return;
 				}
 			}
+			timing.mark("session");
 			if (deps.config.liveExecution) {
 				const required = parsed.selections.reduce(
 					(sum, selection) => sum + BigInt(selection.amountInBaseUnits),
@@ -434,18 +452,36 @@ export function createApp(deps: AppDependencies) {
 					return;
 				}
 			}
+			timing.mark("balance");
 			const slotBudgetBaseUnits = parsed.selections[0]?.amountInBaseUnits;
-			const candidates = await deps.candidates.getCandidates(
+			const candidates = await deps.candidates.getCandidatesForExecution(
 				response.locals.wallet,
+				parsed.selections.map((selection) => selection.assetId),
 				slotBudgetBaseUnits,
 			);
-			validateExecutionSelection(parsed, candidates);
+			validateExecutionAssets(parsed, candidates);
+			timing.mark("candidates");
 			const preparation = await deps.execution.prepare(
 				response.locals.wallet,
 				parsed,
 				candidates,
 			);
 			const quotes = preparation.quotes;
+			const quotesByAssetId = new Map(
+				quotes.map((quote) => [quote.assetId, quote]),
+			);
+			const quotedCandidates = candidates.map((candidate) => {
+				const quote = quotesByAssetId.get(candidate.assetId);
+				if (!quote) {
+					throw new PolicyError(
+						"ASSET_NOT_ELIGIBLE",
+						`${candidate.assetId} did not return an executable quote.`,
+					);
+				}
+				return { ...candidate, quote };
+			});
+			validateExecutionSelection(parsed, quotedCandidates);
+			timing.mark("execution");
 			const plan = {
 				executionId: session.executionId ?? randomUUID(),
 				sessionId: session.id,
@@ -476,6 +512,8 @@ export function createApp(deps: AppDependencies) {
 			const execution = session.executionId
 				? await deps.store.refreshPreparedExecution(session.executionId, plan)
 				: await deps.store.reserveExecution(session.id, plan);
+			timing.mark("store");
+			timing.apply(response);
 			response.json({ ...execution, walletCalls: preparation.walletCalls });
 		},
 	);
@@ -863,6 +901,46 @@ export function createApp(deps: AppDependencies) {
 		},
 	);
 	return app;
+}
+
+function serverTiming(route: "feed" | "prepare", log: boolean) {
+	const startedAt = performance.now();
+	let stageStartedAt = startedAt;
+	const stages: Array<{ name: string; duration: number }> = [];
+	return {
+		mark(name: string) {
+			const now = performance.now();
+			stages.push({ name, duration: now - stageStartedAt });
+			stageStartedAt = now;
+		},
+		apply(response: Response) {
+			const total = performance.now() - startedAt;
+			if (log) {
+				console.log(
+					JSON.stringify({
+						event: "request_timing",
+						route,
+						stages: Object.fromEntries(
+							stages.map((stage) => [
+								stage.name,
+								Number(stage.duration.toFixed(1)),
+							]),
+						),
+						totalMs: Number(total.toFixed(1)),
+					}),
+				);
+			}
+			response.setHeader(
+				"Server-Timing",
+				[
+					...stages.map(
+						(stage) => `${stage.name};dur=${stage.duration.toFixed(1)}`,
+					),
+					`total;dur=${total.toFixed(1)}`,
+				].join(", "),
+			);
+		},
+	};
 }
 
 const TRANSFER_TOPIC =

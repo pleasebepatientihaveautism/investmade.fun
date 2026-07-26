@@ -3,7 +3,6 @@ import type { Candidate } from "../../domain/schemas";
 import { AssetMark } from "./AssetMark";
 import { Shield } from "./Icons";
 
-const CARD_DOTS = Array.from({ length: 10 }, (_, dot) => `card-dot-${dot + 1}`);
 const SWIPE_THRESHOLD_PX = 72;
 type DecisionFeedback = "invest" | "skip";
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -106,9 +105,7 @@ export function SwipeCard({
       </details>
       <fieldset className="card-counter">
         <legend className="sr-only">Card {index + 1} of {total}</legend>
-        {CARD_DOTS.slice(0, total).map((dotId, dot) => (
-          <span key={dotId} className={dot === index ? "active" : ""} />
-        ))}
+        <span>{index + 1} of {total}</span>
       </fieldset>
     </article>
   );

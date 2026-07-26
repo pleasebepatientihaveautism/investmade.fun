@@ -14,9 +14,6 @@ export function AccountScreen({
 	smartWalletReady,
 	preferences,
 	developerMode,
-	devCardLimit,
-	maxDevCards,
-	onDevCardLimitChange,
 	onResetDemoWeek,
 	onSave,
 }: {
@@ -25,9 +22,6 @@ export function AccountScreen({
 	smartWalletReady: boolean;
 	preferences: OnboardingPreferences;
 	developerMode: boolean;
-	devCardLimit: number;
-	maxDevCards: number;
-	onDevCardLimitChange: (limit: number) => void;
 	onResetDemoWeek: () => Promise<void>;
 	onSave: (preferences: OnboardingPreferences) => Promise<void>;
 }) {
@@ -363,31 +357,13 @@ export function AccountScreen({
 						</div>
 						<span className="settings-limit">Local only</span>
 					</div>
-					<div className="settings-field">
-						<span>Cards to show in this basket</span>
-						<SelectMenu
-							ariaLabel="Cards to show in this basket. Only live, eligible, quoteable cards are shown."
-							value={String(devCardLimit)}
-							options={Array.from(
-								{ length: maxDevCards },
-								(_, index) => index + 1,
-							).map((limit) => ({
-								value: String(limit),
-								label: `${limit} ${limit === 1 ? "card" : "cards"}`,
-							}))}
-							onChange={(limit) => onDevCardLimitChange(Number(limit))}
-						/>
-						<small>
-							Only live, eligible, quoteable cards are shown.
-						</small>
-					</div>
 					<div className="settings-actions">
 						<button
 							type="button"
 							className="button button-outline"
 							onClick={() => void onResetDemoWeek()}
 						>
-							Reset local week limit and build a new basket
+							Build a new local basket
 						</button>
 					</div>
 				</section>

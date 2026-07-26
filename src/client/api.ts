@@ -15,6 +15,7 @@ export interface WeeklySession {
 export interface FeedResponse {
   candidates: Candidate[];
   feed: FeedOutput;
+  hasMore: boolean;
   proof: {
     network: string;
     model: string;
@@ -173,11 +174,11 @@ export const api = {
   generateFeed: (
     sessionId: string,
     preferences: OnboardingPreferences,
-    candidateLimit?: number
+    excludedAssetIds: string[] = []
   ) =>
     request<FeedResponse>(`/api/sessions/${sessionId}/feed`, {
       method: "POST",
-      body: JSON.stringify({ ...preferences, candidateLimit })
+      body: JSON.stringify({ ...preferences, excludedAssetIds })
     }),
   prepareExecution: (sessionId: string, assetIds: string[], ticketSizeUsd: number) =>
     request<ExecutionRecord>("/api/executions/prepare", {

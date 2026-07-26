@@ -21,7 +21,14 @@ export interface CandidateProvider {
     wallet: string,
     amountInBaseUnits?: string,
     now?: Date,
-    limit?: number
+    limit?: number,
+    excludedAssetIds?: string[]
+  ): Promise<Candidate[]>;
+  getCandidatesForExecution(
+    wallet: string,
+    assetIds: string[],
+    amountInBaseUnits?: string,
+    now?: Date
   ): Promise<Candidate[]>;
 }
 

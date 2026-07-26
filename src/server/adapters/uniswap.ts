@@ -11,51 +11,53 @@ export class UniswapProvider implements ExecutionProvider {
     const total = request.selections
       .reduce((sum, selection) => sum + BigInt(selection.amountInBaseUnits), 0n)
       .toString();
-    const approvalCalls = await this.approvalCalls(wallet, USDG_ADDRESS, total);
-    const prepared = await Promise.all(
-      request.selections.map(async (selection) => {
-        const candidate = byId.get(selection.assetId);
-        if (!candidate) throw new Error("CANDIDATE_NOT_FOUND");
-        const raw = await this.quoteRaw(
-          wallet,
-          candidate,
-          selection.amountInBaseUnits,
-          request.slippageBps,
-          true
-        );
-        const routing = normalizeRouting(raw.body.routing);
-        if (routing !== "CLASSIC") {
-          throw new Error(`UNSUPPORTED_MVP_ROUTING_${routing}`);
-        }
-        const swapResponse = await fetch("https://trade-api.gateway.uniswap.org/v1/swap", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": this.apiKey,
-            "x-universal-router-version": "2.1.1"
-          },
-          body: JSON.stringify(swapRequest(raw.body)),
-          signal: AbortSignal.timeout(12_000)
-        });
-        const swapBody = (await swapResponse.json()) as any;
-        if (!swapResponse.ok) throw new Error(`UNISWAP_SWAP_${swapResponse.status}`);
-        const swapCall: WalletCall = {
-          kind: "SWAP",
-          assetId: candidate.assetId,
-          transaction: validateTransaction(swapBody.swap, wallet)
-        };
-        return {
-          quote: this.summarizeQuote(
-            raw.body,
+    const [approvalCalls, prepared] = await Promise.all([
+      this.approvalCalls(wallet, USDG_ADDRESS, total),
+      Promise.all(
+        request.selections.map(async (selection) => {
+          const candidate = byId.get(selection.assetId);
+          if (!candidate) throw new Error("CANDIDATE_NOT_FOUND");
+          const raw = await this.quoteRaw(
+            wallet,
             candidate,
             selection.amountInBaseUnits,
-            candidate.contract
-          ),
-          swapCall,
-          permitCall: this.permitCall(raw.body, wallet)
-        };
-      })
-    );
+            request.slippageBps,
+            true
+          );
+          const routing = normalizeRouting(raw.body.routing);
+          if (routing !== "CLASSIC") {
+            throw new Error(`UNSUPPORTED_MVP_ROUTING_${routing}`);
+          }
+          const swapResponse = await fetch("https://trade-api.gateway.uniswap.org/v1/swap", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": this.apiKey,
+              "x-universal-router-version": "2.1.1"
+            },
+            body: JSON.stringify(swapRequest(raw.body)),
+            signal: AbortSignal.timeout(12_000)
+          });
+          const swapBody = (await swapResponse.json()) as any;
+          if (!swapResponse.ok) throw new Error(`UNISWAP_SWAP_${swapResponse.status}`);
+          const swapCall: WalletCall = {
+            kind: "SWAP",
+            assetId: candidate.assetId,
+            transaction: validateTransaction(swapBody.swap, wallet)
+          };
+          return {
+            quote: this.summarizeQuote(
+              raw.body,
+              candidate,
+              selection.amountInBaseUnits,
+              candidate.contract
+            ),
+            swapCall,
+            permitCall: this.permitCall(raw.body, wallet)
+          };
+        })
+      )
+    ]);
     const permitCalls = dedupePermitCalls(
       prepared
         .map((item) => item.permitCall)

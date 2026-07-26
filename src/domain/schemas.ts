@@ -1,7 +1,5 @@
 import { z } from "zod";
 import {
-  MAX_CARDS,
-  LOCAL_DEMO_CANDIDATE_LIMIT,
   POLICY_VERSION,
   ROBINHOOD_CHAIN_ID,
   DEFAULT_SLOT_BUDGET,
@@ -92,10 +90,10 @@ export const feedInputSchema = z.object({
   budget: z.object({
     periodBudgetBaseUnits: baseUnitsSchema,
     slotBudgetBaseUnits: baseUnitsSchema,
-    maxCards: z.number().int().min(1).max(MAX_CARDS)
+    maxCards: z.number().int().min(1)
   }),
   preferences: personalizationPreferencesSchema,
-  candidates: z.array(candidateSchema).max(LOCAL_DEMO_CANDIDATE_LIMIT),
+  candidates: z.array(candidateSchema),
   inputCommitment: z.string().regex(/^sha256:[a-f0-9]{64}$/)
 });
 
@@ -115,7 +113,7 @@ export const feedOutputSchema = z.object({
   inputCommitment: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   policyVersion: z.literal(POLICY_VERSION),
   regime: z.enum(["CRYPTO_BULLISH", "CRYPTO_NEUTRAL", "CRYPTO_BEARISH", "RISK_OFF"]),
-  cards: z.array(feedCardSchema).max(MAX_CARDS),
+  cards: z.array(feedCardSchema),
   warnings: z.array(z.string())
 });
 
@@ -128,7 +126,7 @@ export const executionRequestSchema = z.object({
   sessionId: z.string().min(1),
   chainId: z.literal(ROBINHOOD_CHAIN_ID),
   inputToken: z.literal(USDG_ADDRESS),
-  selections: z.array(selectedAssetSchema).min(1).max(MAX_CARDS),
+  selections: z.array(selectedAssetSchema).min(1),
   slippageBps: z.number().int().min(1).max(100)
 });
 
@@ -159,7 +157,7 @@ export function budgetForTicket(ticketSizeUsd: number) {
   return {
     periodBudgetBaseUnits: PERIOD_BUDGET.toString(),
     slotBudgetBaseUnits: slotBudget.toString(),
-    maxCards: Math.min(MAX_CARDS, Number(PERIOD_BUDGET / slotBudget))
+    maxCards: Number(PERIOD_BUDGET / slotBudget)
   };
 }
 
