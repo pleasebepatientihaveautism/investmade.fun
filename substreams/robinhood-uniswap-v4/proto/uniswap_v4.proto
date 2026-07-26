@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package investmade.uniswap.v4;
+
+message Initialize {
+  uint64 block_number = 1;
+  uint64 timestamp = 2;
+  string transaction_hash = 3;
+  uint32 log_index = 4;
+  string pool_id = 5;
+  string currency0 = 6;
+  string currency1 = 7;
+  uint32 fee = 8;
+  int32 tick_spacing = 9;
+  string hooks = 10;
+  string sqrt_price_x96 = 11;
+  int32 tick = 12;
+}
+
+message Swap {
+  uint64 block_number = 1;
+  uint64 timestamp = 2;
+  string transaction_hash = 3;
+  uint32 log_index = 4;
+  string pool_id = 5;
+  string sender = 6;
+  string amount0 = 7;
+  string amount1 = 8;
+  string sqrt_price_x96 = 9;
+  string liquidity = 10;
+  int32 tick = 11;
+  uint32 fee = 12;
+}
+
+message Events {
+  repeated Initialize initializes = 1;
+  repeated Swap swaps = 2;
+}

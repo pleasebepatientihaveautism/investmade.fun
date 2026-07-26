@@ -1,0 +1,29 @@
+specVersion: v0.1.0
+
+package:
+  name: investmade_robinhood_uniswap_v4
+  version: v0.1.0
+  url: https://github.com/pleasebepatientihaveautism/investmade.fun/tree/main/substreams/robinhood-uniswap-v4
+  description: Uniswap v4 pool initialization and swaps on Robinhood Chain
+
+network: robinhood
+
+protobuf:
+  files:
+    - uniswap_v4.proto
+  importPaths:
+    - ./proto
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/investmade_robinhood_uniswap_v4.wasm
+
+modules:
+  - name: map_events
+    kind: map
+    initialBlock: 9070
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:investmade.uniswap.v4.Events
