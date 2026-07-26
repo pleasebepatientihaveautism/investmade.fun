@@ -2,12 +2,11 @@ import type { Candidate } from "../../domain/schemas";
 import type { OnboardingPreferences } from "../../domain/schemas";
 import { formatTicketSizeUsd } from "../../domain/schemas";
 import { AssetMark } from "./AssetMark";
-import { ArrowRight, Close } from "./Icons";
+import { Close } from "./Icons";
 
 export function BudgetRail({
   selected,
   onRemove,
-  onReview,
   executionMode,
   ticketSizeUsd,
   cadence,
@@ -15,7 +14,6 @@ export function BudgetRail({
 }: {
   selected: Candidate[];
   onRemove: (assetId: string) => void;
-  onReview: () => void;
   executionMode: "demo" | "local-live" | "live";
   ticketSizeUsd: number;
   cadence: OnboardingPreferences["cadence"];
@@ -48,9 +46,6 @@ export function BudgetRail({
           ))
         )}
       </div>
-      <button type="button" className="button button-outline rail-review" disabled={!selected.length} onClick={onReview}>
-        Review and sign <ArrowRight />
-      </button>
       <div className="freshness-note">
         <span>!</span>
         <p><strong>Quotes are time-sensitive</strong>They refresh before confirmation.</p>

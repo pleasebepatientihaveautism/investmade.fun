@@ -378,8 +378,7 @@ export function AccountScreen({
 							onChange={(limit) => onDevCardLimitChange(Number(limit))}
 						/>
 						<small>
-							Only live, eligible, quoteable cards are shown. The production
-							limit is unchanged.
+							Only live, eligible, quoteable cards are shown.
 						</small>
 					</div>
 					<div className="settings-actions">

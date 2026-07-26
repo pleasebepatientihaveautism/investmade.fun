@@ -56,8 +56,8 @@ describe("core API flow", () => {
 			.post(`/api/sessions/${opened.body.id}/feed`)
 			.send(onboardingPreferences)
 			.expect(200);
-		expect(feed.body.feed.cards).toHaveLength(3);
-		expect(feed.body.candidates).toHaveLength(3);
+		expect(feed.body.feed.cards).toHaveLength(10);
+		expect(feed.body.candidates).toHaveLength(10);
 		expect(feed.body.candidates[0].quote.unitPriceUsd).toBe("3212.335367");
 		expect(feed.body.proof.teeVerified).toBe(false);
 
@@ -130,7 +130,7 @@ describe("core API flow", () => {
 			})
 			.expect(200);
 
-		expect(feed.body.candidates).toHaveLength(3);
+		expect(feed.body.candidates).toHaveLength(9);
 		expect(
 			feed.body.candidates.every(
 				(candidate: { kind: string }) => candidate.kind === "STOCK_TOKEN",
@@ -153,6 +153,21 @@ describe("core API flow", () => {
 			.expect(200);
 		expect(prepared.body.plan.totalInputBaseUnits).toBe("10000000");
 		expect(prepared.body.plan.quotes[0].amountInBaseUnits).toBe("10000000");
+	});
+
+	it("stops candidate work at the requested feed size", async () => {
+		const app = testApp();
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "weekly" })
+			.expect(200);
+		const feed = await request(app)
+			.post(`/api/sessions/${opened.body.id}/feed`)
+			.send({ ...onboardingPreferences, candidateLimit: 5 })
+			.expect(200);
+
+		expect(feed.body.candidates).toHaveLength(5);
+		expect(feed.body.feed.cards).toHaveLength(5);
 	});
 
 	it("drops a quote that expired during candidate discovery before inference", async () => {
@@ -197,7 +212,7 @@ describe("core API flow", () => {
 			.send(onboardingPreferences)
 			.expect(200);
 
-		expect(feed.body.candidates).toHaveLength(3);
+		expect(feed.body.candidates).toHaveLength(9);
 		expect(
 			feed.body.candidates.some(
 				(candidate: { assetId: string }) =>
@@ -217,8 +232,8 @@ describe("core API flow", () => {
 			.send({ ...onboardingPreferences, cadence: "monthly", ticketSizeUsd: 25 })
 			.expect(200);
 
-		expect(feed.body.candidates).toHaveLength(3);
-		expect(feed.body.feed.cards).toHaveLength(3);
+		expect(feed.body.candidates).toHaveLength(4);
+		expect(feed.body.feed.cards).toHaveLength(4);
 		expect(
 			feed.body.feed.cards.every(
 				(card: { amountInBaseUnits: string }) =>
@@ -238,7 +253,7 @@ describe("core API flow", () => {
 			.post(`/api/sessions/${opened.body.id}/feed`)
 			.send({ ...onboardingPreferences, ticketSizeUsd: 0.1 })
 			.expect(200);
-		expect(tenth.body.feed.cards).toHaveLength(3);
+		expect(tenth.body.feed.cards).toHaveLength(10);
 		expect(
 			tenth.body.feed.cards.every(
 				(card: { amountInBaseUnits: string }) =>
@@ -250,7 +265,7 @@ describe("core API flow", () => {
 			.post(`/api/sessions/${opened.body.id}/feed`)
 			.send({ ...onboardingPreferences, ticketSizeUsd: 0.25 })
 			.expect(200);
-		expect(quarter.body.feed.cards).toHaveLength(3);
+		expect(quarter.body.feed.cards).toHaveLength(10);
 		expect(
 			quarter.body.feed.cards.every(
 				(card: { amountInBaseUnits: string }) =>

@@ -556,6 +556,8 @@ button:focus-visible { outline: 3px solid rgba(18, 71, 232, 0.35); outline-offse
 .signal-weth span { background: #5c6ee5; }
 .signal-tsla span { background: #e52621; }
 .card-reason { font-size: 17px; line-height: 1.35; max-width: 480px; margin: 14px 0 16px; font-weight: 600; }
+.card-disclosure summary { color: var(--blue); cursor: pointer; font-weight: 700; margin-bottom: 10px; }
+.card-disclosure:not([open]) summary { margin-bottom: 0; }
 .card-evidence { display: grid; grid-template-columns: 1fr 1.5fr; border: 1px solid var(--line); border-radius: 10px; }
 .card-evidence > div { padding: 12px; }
 .card-evidence > div + div { border-left: 1px solid var(--line); }
@@ -619,7 +621,8 @@ button:focus-visible { outline: 3px solid rgba(18, 71, 232, 0.35); outline-offse
 .basket-amount { text-align: right; }
 .basket-row button { background: none; border: 0; height: 100%; border-left: 1px solid var(--line); cursor: pointer; padding-left: 10px; }
 .basket-row button svg { width: 17px; }
-.rail-review { width: 100%; margin-top: 16px; }
+.new-basket-button { min-height: 42px; margin-top: 14px; padding: 0 16px; }
+.review-preparing { min-height: calc(100dvh - 132px); }
 .freshness-note { display: grid; grid-template-columns: 35px 1fr 36px; gap: 9px; align-items: center; padding: 12px; border: 1px solid #e5b52b; background: var(--warning); border-radius: 9px; margin-top: 17px; }
 .freshness-note > span { width: 31px; height: 31px; border: 1.5px solid; display: grid; place-items: center; border-radius: 50%; font-weight: 800; }
 .freshness-note p { display: flex; flex-direction: column; margin: 0; font-size: 10px; color: var(--muted); }

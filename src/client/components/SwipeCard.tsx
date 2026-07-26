@@ -3,7 +3,7 @@ import type { Candidate } from "../../domain/schemas";
 import { AssetMark } from "./AssetMark";
 import { Shield } from "./Icons";
 
-const CARD_DOTS = ["card-dot-1", "card-dot-2", "card-dot-3"];
+const CARD_DOTS = Array.from({ length: 10 }, (_, dot) => `card-dot-${dot + 1}`);
 const SWIPE_THRESHOLD_PX = 72;
 type DecisionFeedback = "invest" | "skip";
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -82,25 +82,28 @@ export function SwipeCard({
         <span>{candidate.symbol}</span>
       </div>
       <p className="card-reason">{candidate.reason}</p>
-      <div className="card-evidence">
-        <div>
-          <p className="micro-label">Evidence</p>
-          <ul>
-            <li><span className="evidence-dot blue" />{executionMode === "live" ? "0G private" : "Local ranking fixture"}</li>
-            <li><span className="evidence-dot black" />{executionMode === "live" ? "World verified" : executionMode === "local-live" ? "Privy wallet auth" : "Identity fixture"}</li>
-            <li><Shield />{executionMode === "demo" ? "Quote fixture" : "Live Uniswap quote"}</li>
-          </ul>
-        </div>
-        <div className="metrics">
-          <p className="micro-label">Key metrics</p>
-          <div className="metric-row">
-            <span><strong>{Math.round(candidate.crowdScoreBps / 100)}%</strong>Crowd</span>
-            <span><strong>{(candidate.quote.priceImpactBps / 100).toFixed(2)}%</strong>Impact</span>
-            <span><strong>{usdFormatter.format(Number(candidate.quote.unitPriceUsd))}</strong>Price</span>
-            <span><strong>fresh</strong>Quote</span>
+      <details className="card-disclosure">
+        <summary>Why this asset?</summary>
+        <div className="card-evidence">
+          <div>
+            <p className="micro-label">Evidence</p>
+            <ul>
+              <li><span className="evidence-dot blue" />{executionMode === "live" ? "0G private" : "Local ranking fixture"}</li>
+              <li><span className="evidence-dot black" />{executionMode === "live" ? "World verified" : executionMode === "local-live" ? "Privy wallet auth" : "Identity fixture"}</li>
+              <li><Shield />{executionMode === "demo" ? "Quote fixture" : "Live Uniswap quote"}</li>
+            </ul>
+          </div>
+          <div className="metrics">
+            <p className="micro-label">Key metrics</p>
+            <div className="metric-row">
+              <span><strong>{Math.round(candidate.crowdScoreBps / 100)}%</strong>Crowd</span>
+              <span><strong>{(candidate.quote.priceImpactBps / 100).toFixed(2)}%</strong>Impact</span>
+              <span><strong>{usdFormatter.format(Number(candidate.quote.unitPriceUsd))}</strong>Price</span>
+              <span><strong>fresh</strong>Quote</span>
+            </div>
           </div>
         </div>
-      </div>
+      </details>
       <fieldset className="card-counter">
         <legend className="sr-only">Card {index + 1} of {total}</legend>
         {CARD_DOTS.slice(0, total).map((dotId, dot) => (

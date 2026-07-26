@@ -43,7 +43,8 @@ export class LiveCandidateProvider implements CandidateProvider {
   async getCandidates(
     wallet: string,
     amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
-    now = new Date()
+    now = new Date(),
+    requestedLimit = this.config.localLiveExecution ? LOCAL_DEMO_CANDIDATE_LIMIT : MAX_CARDS
   ): Promise<Candidate[]> {
     const registry = this.options.cryptoOnly
       ? undefined
@@ -52,11 +53,12 @@ export class LiveCandidateProvider implements CandidateProvider {
 
     const assets = Object.values(ASSET_REGISTRY)
       .filter((asset) => !this.options.cryptoOnly || asset.kind === "CRYPTO");
-    const limit = this.config.localLiveExecution ? assets.length : MAX_CARDS * 2;
+    const target = Math.max(1, Math.min(requestedLimit, LOCAL_DEMO_CANDIDATE_LIMIT));
+    const limit = this.config.localLiveExecution ? assets.length : target * 2;
     const candidates: Candidate[] = [];
 
     // Quotes are serial to respect the Uniswap Trading API's rate limit. We
-    // stop once the feed has three genuinely executable assets.
+    // stop once the requested feed is full.
     for (const asset of assets.slice(0, limit)) {
       const candidate = await this.resolveCandidate(
         asset,
@@ -67,7 +69,7 @@ export class LiveCandidateProvider implements CandidateProvider {
         stockEligible
       );
       if (candidate) candidates.push(candidate);
-      if (candidates.length === (this.config.localLiveExecution ? LOCAL_DEMO_CANDIDATE_LIMIT : MAX_CARDS)) break;
+      if (candidates.length === target) break;
     }
     return candidates;
   }
@@ -105,7 +107,7 @@ export class LiveCandidateProvider implements CandidateProvider {
         // Robinhood's equity-price feed is not continuously updated outside
         // market hours. A local-live session is explicitly a developer/demo
         // environment, so keep an active, non-halted, on-chain stock token in
-        // the three-card preview even when that timestamp is stale. Production
+        // the local preview even when that timestamp is stale. Production
         // continues to require a fresh price before an asset can pass policy.
         const priceIsFresh = ageMs >= 0 && ageMs <= 60_000;
         marketHealthy = Boolean(

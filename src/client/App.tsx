@@ -127,9 +127,15 @@ export function App({ config }: { config: PublicConfig }) {
 	const loadSession = useCallback(
 		async (preferences: OnboardingPreferences) => {
 			setError("");
+			setView("week");
+			setStage("loading");
 			try {
 				const opened = await api.openSession(preferences.cadence);
-				const generated = await api.generateFeed(opened.id, preferences);
+				const generated = await api.generateFeed(
+					opened.id,
+					preferences,
+					devCardLimit,
+				);
 				setPreferences(preferences);
 				setSession(opened);
 				setFeed(generated);
@@ -145,7 +151,7 @@ export function App({ config }: { config: PublicConfig }) {
 				setStage("swipe");
 			}
 		},
-		[],
+		[devCardLimit],
 	);
 
 	useEffect(() => {
@@ -181,8 +187,6 @@ export function App({ config }: { config: PublicConfig }) {
 	);
 	const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
 	const cadence = preferences?.cadence ?? "weekly";
-	// The developer menu changes how many candidates can be reviewed. The
-	// signed basket is still bound by the production three-card policy.
 	const maxCards = Math.min(config.maxCards, Math.floor(100 / ticketSizeUsd));
 
 	function changeDevCardLimit(next: number) {
@@ -194,7 +198,11 @@ export function App({ config }: { config: PublicConfig }) {
 	const recoverReviewSession = useCallback(async () => {
 		if (!preferences) throw new Error("PREFERENCES_REQUIRED");
 		const opened = await api.openSession(preferences.cadence);
-		const generated = await api.generateFeed(opened.id, preferences);
+		const generated = await api.generateFeed(
+			opened.id,
+			preferences,
+			devCardLimit,
+		);
 		const available = new Set(
 			generated.candidates.map((candidate) => candidate.assetId),
 		);
@@ -208,7 +216,7 @@ export function App({ config }: { config: PublicConfig }) {
 		setFeed(generated);
 		setSelectedIds(assetIds);
 		return { sessionId: opened.id, assetIds };
-	}, [preferences, selectedIds]);
+	}, [devCardLimit, preferences, selectedIds]);
 
 	function decide(add: boolean) {
 		if (!current) return;
@@ -366,7 +374,7 @@ export function App({ config }: { config: PublicConfig }) {
 					<main className="swipe-page">
 						<section className="swipe-workspace">
 							<header className="page-heading">
-								<h1>Build this {periodLabel(cadence)} basket</h1>
+								<h1>Build today’s basket</h1>
 								<p>
 									Swipe right to allocate {ticketSizeUsd} USDG. Nothing moves
 									until you review and confirm.
@@ -376,6 +384,15 @@ export function App({ config }: { config: PublicConfig }) {
 										<b>Live signing enabled.</b> Real USDG → WETH Uniswap quote;
 										ranking evidence is local-only.
 									</p>
+								) : null}
+								{preferences ? (
+									<button
+										type="button"
+										className="button button-outline new-basket-button"
+										onClick={() => void loadSession(preferences)}
+									>
+										New basket
+									</button>
 								) : null}
 							</header>
 							{error ? (
@@ -457,7 +474,7 @@ export function App({ config }: { config: PublicConfig }) {
 											}}
 											disabled={!selected.length}
 										>
-											Review and sign <ArrowRight />
+											Review basket ({selected.length}) <ArrowRight />
 										</button>
 									</div>
 								</>
@@ -489,7 +506,7 @@ export function App({ config }: { config: PublicConfig }) {
 											setStage("review");
 										}}
 									>
-										Review and sign <ArrowRight />
+										Review basket ({selected.length}) <ArrowRight />
 									</button>
 								</div>
 							)}
@@ -497,10 +514,6 @@ export function App({ config }: { config: PublicConfig }) {
 						<BudgetRail
 							selected={selected}
 							onRemove={remove}
-							onReview={() => {
-								scrollToTop();
-								setStage("review");
-							}}
 							executionMode={config.executionMode}
 							ticketSizeUsd={ticketSizeUsd}
 							cadence={cadence}
@@ -531,12 +544,6 @@ export function App({ config }: { config: PublicConfig }) {
 
 function scrollToTop() {
 	window.scrollTo({ top: 0, behavior: "auto" });
-}
-
-function periodLabel(cadence: OnboardingPreferences["cadence"]) {
-	if (cadence === "daily") return "day’s";
-	if (cadence === "monthly") return "month’s";
-	return "week’s";
 }
 
 function readDevCardLimit(maxCards: number) {

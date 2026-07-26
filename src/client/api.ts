@@ -170,10 +170,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ cadence })
     }),
-  generateFeed: (sessionId: string, preferences: OnboardingPreferences) =>
+  generateFeed: (
+    sessionId: string,
+    preferences: OnboardingPreferences,
+    candidateLimit?: number
+  ) =>
     request<FeedResponse>(`/api/sessions/${sessionId}/feed`, {
       method: "POST",
-      body: JSON.stringify(preferences)
+      body: JSON.stringify({ ...preferences, candidateLimit })
     }),
   prepareExecution: (sessionId: string, assetIds: string[], ticketSizeUsd: number) =>
     request<ExecutionRecord>("/api/executions/prepare", {

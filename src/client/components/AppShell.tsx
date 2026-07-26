@@ -35,9 +35,9 @@ export function AppShell({
 				{navigationEnabled ? (
 					<nav aria-label="Primary navigation">
 						{[
-							["week", "This week"],
-							["positions", "Positions"],
-							["receipts", "Receipts"],
+							["week", "Basket"],
+							["positions", "Holdings"],
+							["receipts", "Activity"],
 							["account", "Account"],
 						].map(([id, label]) => (
 							<button

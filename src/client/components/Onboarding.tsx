@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { IDKit, orbLegacy } from "@worldcoin/idkit-core";
+import { MAX_CARDS } from "../../domain/constants";
 import {
 	isTicketSizeUsd,
 	type OnboardingPreferences,
@@ -840,7 +841,7 @@ function isPresetTicket(value: number): value is 2 | 10 | 25 {
 }
 
 function maxCardsFor(ticketSizeUsd: number) {
-	return Math.min(3, Math.floor(100 / ticketSizeUsd));
+	return Math.min(MAX_CARDS, Math.floor(100 / ticketSizeUsd));
 }
 
 function cadenceLabel(cadence: OnboardingPreferences["cadence"]) {

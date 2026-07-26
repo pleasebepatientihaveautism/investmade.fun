@@ -80,14 +80,14 @@ export class DemoProvider
   async getCandidates(
     _wallet: string,
     amountInBaseUnits = DEFAULT_SLOT_BUDGET.toString(),
-    now = new Date()
+    now = new Date(),
+    limit = MAX_CARDS
   ): Promise<Candidate[]> {
     const expiresAt = new Date(now.getTime() + 60_000).toISOString();
     const amount = BigInt(amountInBaseUnits);
-    // The API applies the three-card policy after personalization filtering so
-    // a stocks-only feed can still offer three stock tokens.
     return Object.values(ASSET_REGISTRY)
       .filter((asset) => Boolean(outputs[asset.symbol] && demoMeta[asset.symbol]))
+      .slice(0, limit)
       .map((asset) => {
       const baseEstimate = outputs[asset.symbol];
       const meta = demoMeta[asset.symbol];

@@ -47,8 +47,8 @@ export function ReviewScreen({
   const { client: smartWalletClient, getClientForChain } = useSmartWallets();
   const [record, setRecord] = useState<ExecutionRecord>();
   const [preparedBasketKey, setPreparedBasketKey] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "refreshing" | "simulating" | "signing" | "settling">("idle");
+  const [loading, setLoading] = useState(true);
+  const [phase, setPhase] = useState<"idle" | "refreshing" | "simulating" | "signing" | "settling">("refreshing");
   const [error, setError] = useState("");
   const [executionConflict, setExecutionConflict] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -275,7 +275,7 @@ export function ReviewScreen({
         {
           uiOptions: {
             description: `Invest ${formatTicketSizeUsd(total)} USDG into ${selected.length} assets. All purchases succeed or none.`,
-            buttonText: "Sign and invest",
+            buttonText: `Sign & invest ${formatTicketSizeUsd(total)} USDG`,
             showWalletUIs: false
           }
         }
@@ -314,6 +314,15 @@ export function ReviewScreen({
     } finally {
       setLoading(false);
     }
+  }
+
+  if (loading && phase === "refreshing") {
+    return (
+      <main className="loading-state review-preparing" aria-live="polite" aria-busy="true">
+        <span />
+        <h1>Preparing transaction…</h1>
+      </main>
+    );
   }
 
   return (
@@ -419,7 +428,7 @@ export function ReviewScreen({
                     : !quotesSafeToSign
                       ? "Refresh quotes & continue"
                     : activeRecord.walletCalls?.length
-                    ? "Review and sign"
+                    ? `Sign & invest ${formatTicketSizeUsd(total)} USDG`
                     : "Simulate wallet confirmation"} <ArrowRight />
             </button>
           )}

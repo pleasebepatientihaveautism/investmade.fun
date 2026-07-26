@@ -23,8 +23,11 @@ export function ReceiptScreen({
   if (!record) {
     return (
       <main className="empty-page">
-        <h1>Receipts</h1>
+        <h1>Activity</h1>
         <p>Your terminal settlement receipts will appear here. A quote or transaction hash alone is never shown as settled.</p>
+        <button type="button" className="button button-primary" onClick={onStartNextBasket}>
+          New basket
+        </button>
       </main>
     );
   }
@@ -91,7 +94,7 @@ export function ReceiptScreen({
             </button>
           ) : null}
           <button type="button" className="button button-outline" onClick={onStartNextBasket}>
-            Build another basket
+            New basket
           </button>
         </div>
       </section>

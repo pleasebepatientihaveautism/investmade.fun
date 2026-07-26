@@ -9,7 +9,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { createPublicClient, http, type Address } from "viem";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import {
 	addressSchema,
 	baseUnitsSchema,
@@ -23,7 +23,7 @@ import { DEFAULT_BUDGET } from "../domain/schemas.js";
 import { sha256 } from "../domain/canonical.js";
 import { executionIntent } from "../domain/execution-intent.js";
 import {
-	LOCAL_DEMO_CANDIDATE_LIMIT,
+	MAX_CARDS,
 	POLICY_VERSION,
 	USDG_ADDRESS,
 	USDG_DECIMALS,
@@ -314,12 +314,21 @@ export function createApp(deps: AppDependencies) {
 			const submittedPreferences = onboardingPreferencesSchema.parse(
 				request.body,
 			);
+			const candidateLimit = z
+				.number()
+				.int()
+				.min(1)
+				.max(MAX_CARDS)
+				.optional()
+				.parse(request.body?.candidateLimit);
 			const { riskDisclosureAccepted: _accepted, ...preferences } =
 				submittedPreferences;
 			const budget = budgetForTicket(preferences.ticketSizeUsd);
 			const generatedCandidates = await deps.candidates.getCandidates(
 				response.locals.wallet,
 				budget.slotBudgetBaseUnits,
+				undefined,
+				candidateLimit,
 			);
 			// Live candidate discovery quotes assets serially to stay within Uniswap's
 			// rate limit. By the time a ten-card local preview is ready, an early quote
@@ -329,12 +338,7 @@ export function createApp(deps: AppDependencies) {
 				generatedCandidates.filter((candidate) =>
 					preferences.assetClasses.includes(candidate.kind),
 				),
-			).slice(
-				0,
-				deps.config.localLiveExecution
-					? LOCAL_DEMO_CANDIDATE_LIMIT
-					: budget.maxCards,
-			);
+			).slice(0, candidateLimit ?? budget.maxCards);
 			if (!candidates.length) {
 				response
 					.status(422)
