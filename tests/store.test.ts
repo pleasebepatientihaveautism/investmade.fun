@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStateStore } from "../src/server/store.js";
-import type { ExecutionPlan } from "../src/domain/schemas.js";
+import {
+	executionPlanSchema,
+	type ExecutionPlan,
+} from "../src/domain/schemas.js";
 
 const plan: ExecutionPlan = {
   executionId: "execution-1",
   sessionId: "filled-later",
   epochId: "2026-W30",
+  provider: "UNISWAP",
+  chain: "ROBINHOOD",
   chainId: 4663,
   inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
   totalInputBaseUnits: "10000000",
@@ -23,6 +28,8 @@ const plan: ExecutionPlan = {
       unitPriceUsd: "10000000",
       priceImpactBps: 10,
       routing: "CLASSIC",
+      provider: "UNISWAP",
+      chain: "ROBINHOOD",
       quotedAt: "2026-07-25T12:00:00.000Z",
       expiresAt: "2026-07-25T12:01:00.000Z"
     }
@@ -31,11 +38,81 @@ const plan: ExecutionPlan = {
 };
 
 describe("weekly session idempotency", () => {
+  it("keeps historical ZERO_EX and CLASSIC plans parseable with their original provider", () => {
+    const legacyZeroEx = {
+      ...plan,
+      chain: undefined,
+      provider: undefined,
+      quotes: [
+        {
+          ...plan.quotes[0],
+          chain: undefined,
+          provider: undefined,
+          routing: "ZERO_EX"
+        }
+      ]
+    };
+    const legacyUniswap = {
+      ...plan,
+      chain: undefined,
+      provider: undefined,
+      quotes: [
+        {
+          ...plan.quotes[0],
+          chain: undefined,
+          provider: undefined,
+          routing: "CLASSIC"
+        }
+      ]
+    };
+    expect(executionPlanSchema.parse(legacyZeroEx)).toMatchObject({
+      chain: "ROBINHOOD",
+      provider: "ZERO_EX"
+    });
+    expect(executionPlanSchema.parse(legacyUniswap)).toMatchObject({
+      chain: "ROBINHOOD",
+      provider: "UNISWAP"
+    });
+  });
+
   it("returns one session per wallet and epoch", async () => {
     const store = new MemoryStateStore();
     const first = await store.openSession("0xabc", "2026-W30");
     const second = await store.openSession("0xABC", "2026-W30");
     expect(first.id).toBe(second.id);
+  });
+
+  it("uses ranking provider as part of session uniqueness", async () => {
+    const store = new MemoryStateStore();
+    const zeroG = await store.openSession(
+      "0xabc",
+      "2026-W30",
+      "ZERO_EX",
+      "ROBINHOOD",
+      "0xabc",
+      "ZERO_G"
+    );
+    const deterministic = await store.openSession(
+      "0xabc",
+      "2026-W30",
+      "ZERO_EX",
+      "ROBINHOOD",
+      "0xabc",
+      "DETERMINISTIC"
+    );
+    expect(deterministic.id).not.toBe(zeroG.id);
+  });
+
+  it("preserves case-sensitive Solana wallet addresses", async () => {
+    const store = new MemoryStateStore();
+    const wallet = "ENskeWSdXAfqZaDAn3xv7X8CdE88Bb3WQreWGAuk9oyh";
+    const session = await store.openSession(
+      wallet,
+      "2026-W30",
+      "JUPITER",
+      "SOLANA"
+    );
+    expect(session.wallet).toBe(wallet);
   });
 
   it("returns the same execution for the same authorized intent and rejects another", async () => {

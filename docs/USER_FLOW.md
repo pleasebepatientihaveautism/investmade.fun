@@ -40,8 +40,6 @@ The wallet stage can perform several actions depending on the user state:
 
 The server receives a short-lived Privy access token plus the smart-wallet address. For live requests, it verifies the token and confirms that address belongs to the authenticated Privy user.
 
-If the deployment exposes a complete World configuration, live onboarding continues to World verification. Without that configuration, World is not displayed and is not a feed gate.
-
 ## 3. Session and feed generation
 
 After wallet activation:
@@ -51,15 +49,15 @@ After wallet activation:
 3. Production uses the cadence epoch directly, enforcing its persistent wallet/epoch boundary.
 4. `POST /api/sessions/:sessionId/feed` derives an exact base-unit budget from the period limit and ticket size.
 5. Candidate discovery filters by the selected asset classes and risk mode.
-6. Live stock-token candidates must have deployed contract code, active Robinhood registry state, non-halted market data, an unpaused oracle, wallet permission, and an exact-size Uniswap quote.
+6. Live stock-token candidates must have deployed contract code, active Robinhood registry state, non-halted market data, an unpaused oracle, wallet permission, and a CoinGecko market price.
 7. Production also requires fresh Robinhood price evidence. Local-live deliberately tolerates stale off-hours stock timestamps while still checking active/non-halted/onchain state.
-8. The ranking provider receives only the bounded candidate packet and preferences. Deterministic policy validates the returned asset IDs, commitments, budgets, quote freshness, and price impact.
+8. The ranking provider receives only the bounded candidate packet and preferences. Deterministic policy validates the returned asset IDs, commitments, budgets, and market-data availability.
 
 The first response contains up to ten candidates. As the user approaches the final three cards, the client requests another page while excluding already seen and selected assets. Loading stops when discovery returns no additional eligible page.
 
 ## 4. Building a basket
 
-Each card shows the asset, ticket amount, current quote-derived unit price, one-month history when available, ranking reason, and proof details.
+Each card shows the asset, ticket amount, current CoinGecko reference price, CoinGecko history when available, ranking reason, and proof details.
 
 - **Skip** advances without allocating budget.
 - **Add** includes the asset when another ticket still fits inside the period limit.
@@ -72,7 +70,7 @@ No funds move during card decisions. The budget rail shows selected count, ticke
 Opening review automatically prepares the basket:
 
 1. The backend regenerates the selected candidates using current live data.
-2. It requests fresh Uniswap quotes and wallet calls.
+2. It requests fresh 0x AllowanceHolder quotes and wallet calls.
 3. It verifies that selected assets, amounts, period limit, and policy still match.
 4. The UI displays total input, remainder, estimated and minimum output, price impact, quote lifetime, smart-wallet readiness, and ranking proof.
 
@@ -138,9 +136,8 @@ Top-up sends USDG from the linked external funding wallet to the Investmade Wall
 | Surface | Demo | Local live | Production |
 |---|---|---|---|
 | Privy wallet | Real | Real | Real |
-| Feed candidates | Fixtures | Live Robinhood/Uniswap | Live Robinhood/Uniswap |
+| Feed candidates | Fixtures with market prices | Live Robinhood + CoinGecko | Live Robinhood + CoinGecko |
 | Ranking proof | Local unless 0G configured | Local unless 0G configured | Verified 0G required |
 | Buy signing | Simulated | Real | Real |
 | Session persistence | Memory, repeatable | Memory, repeatable | PostgreSQL, cadence-bound |
-| World gate | Off | Off | Optional, configuration-driven |
 | Receipt | Explicit demo receipt | Live chain receipt | Live chain receipt |

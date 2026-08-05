@@ -1,159 +1,469 @@
-import type { Candidate } from "../../domain/schemas";
+import {
+	ChevronDown,
+	ExternalLink,
+	FileText,
+	LoaderCircle,
+	RotateCcw,
+	SlidersHorizontal,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
+import type { Candidate } from "../../domain/schemas";
 import type { ExecutionRecord, FeedResponse } from "../api";
 import { AssetMark } from "./AssetMark";
+import { Confetti } from "./magicui/confetti";
 import { Check, Shield } from "./Icons";
-import { LoaderCircle, RotateCcw } from "lucide-react";
 
 export function ReceiptScreen({
-  record,
-  selected,
-  feed,
-  demoMode,
-  onResume,
-  onStartNextBasket
+	record,
+	selected,
+	feed,
+	demoMode,
+	onResume,
+	onViewPortfolio,
+	onStartNextBasket,
 }: {
-  record?: ExecutionRecord;
-  selected: Candidate[];
-  feed?: FeedResponse;
-  demoMode: boolean;
-  onResume: () => Promise<void>;
-  onStartNextBasket: () => void;
+	record?: ExecutionRecord;
+	selected: Candidate[];
+	feed?: FeedResponse;
+	demoMode: boolean;
+	onResume: () => Promise<void>;
+	onViewPortfolio: () => void;
+	onStartNextBasket: () => void;
 }) {
-  if (!record) {
-    return (
-      <main className="empty-page">
-        <h1>Activity</h1>
-        <p>Your terminal settlement receipts will appear here. A quote or transaction hash alone is never shown as settled.</p>
-        <button type="button" className="button button-primary" onClick={onStartNextBasket}>
-          New basket
-        </button>
-      </main>
-    );
-  }
-  const isTerminal = ["SETTLED", "PARTIAL", "FAILED"].includes(record.status);
-  const successfulLegs = record.settledOutputs.filter((output) => output.status === "success").length;
-  const receiptStatus = receiptCopy(record.status, selected.length, successfulLegs, demoMode);
-  const outputsByAssetId = new Map(record.settledOutputs.map((output) => [output.assetId, output]));
-  const transactionHash = record.transactionHashes.at(-1);
-  const isPending = record.status === "SUBMITTED";
-  return (
-    <main className="receipt-page">
-      <div className="receipt-heading">
-        <span className={`receipt-check ${isPending ? "pending" : record.status === "FAILED" ? "failed" : ""}`}>
-          {isPending ? <LoaderCircle /> : record.status === "FAILED" ? <span aria-hidden="true">!</span> : <Check />}
-        </span>
-        <div><h1>{receiptStatus.title}</h1><p>{receiptStatus.description}</p></div>
-      </div>
-      <section className="receipt-ledger">
-        <div className="receipt-header"><h2>{demoMode ? "Demo basket receipt" : "Atomic basket receipt"}</h2><span>{record.plan.epochId}</span></div>
-        <div className="atomic-receipt-strip">
-          <b>{demoMode ? "Simulated basket · no transaction" : "One confirmation · one operation"}</b>
-          <span>
-            {demoMode
-              ? `${record.plan.quotes.length} swap legs were simulated locally.`
-              : `${record.plan.quotes.length} swaps execute together or the complete basket reverts.`}
-          </span>
-          {transactionHash ? (
-            demoMode ? <code>{shortHash(transactionHash)}</code> : (
-              <a href={explorerUrl(transactionHash)} target="_blank" rel="noreferrer">{shortHash(transactionHash)}</a>
-            )
-          ) : <code>Awaiting operation hash</code>}
-        </div>
-        {selected.map((candidate) => {
-          const output = outputsByAssetId.get(candidate.assetId);
-          const isSuccess = output?.status === "success";
-          return (
-            <div className="receipt-row" key={candidate.assetId}>
-              <AssetMark symbol={candidate.symbol} size="sm" />
-              <b>
-                {candidate.symbol}
-                <small>{formatUnits(BigInt(candidate.quote.amountInBaseUnits), 6)} USDG input</small>
-              </b>
-              <span className={isSuccess ? "status-complete" : output?.status === "failed" ? "status-failed" : "status-pending"}>
-                {isSuccess ? <Check /> : null}
-                {isSuccess && output
-                  ? `${formatUnits(BigInt(output.amountOutBaseUnits), candidate.decimals)} ${candidate.symbol}`
-                  : output?.status === "failed"
-                    ? "Not settled"
-                    : isTerminal
-                      ? "No output recorded"
-                      : "Awaiting receipt"}
-              </span>
-            </div>
-          );
-        })}
-        {!selected.length ? (
-          <p className="receipt-missing-snapshot">The operation is preserved, but its local card snapshot is unavailable. Use the operation link for the canonical onchain details.</p>
-        ) : null}
-        <div className="receipt-actions">
-          {transactionHash && !demoMode ? (
-            <a className="button button-primary" href={explorerUrl(transactionHash)} target="_blank" rel="noreferrer">
-              View transaction on Robinhood Chain
-            </a>
-          ) : null}
-          {isPending ? (
-            <button type="button" className="button button-outline" onClick={() => void onResume()}>
-              <RotateCcw aria-hidden="true" /> Check settlement
-            </button>
-          ) : null}
-          <button type="button" className="button button-outline" onClick={onStartNextBasket}>
-            New basket
-          </button>
-        </div>
-      </section>
-      <aside className="receipt-proof">
-        <h2>Proof chain</h2>
-        <p><Shield /><span>Authorized plan<b>{shortHash(record.plan.authorizedPlanHash)}</b></span></p>
-        <p><Shield /><span>Policy hash<b>{shortHash(record.plan.policyHash)}</b></span></p>
-        <p><Shield /><span>{demoMode ? "Ranking output" : "0G output"}<b>{feed ? shortHash(feed.proof.outputCommitment) : "Feed snapshot unavailable"}</b></span></p>
-        {!demoMode && feed?.proof.teeVerified ? (
-          <div className="receipt-proof-links">
-            <a href={zeroGProviderUrl(feed.proof.provider)} target="_blank" rel="noreferrer">
-              View TEE provider on 0G Explorer ↗
-            </a>
-            <a href="https://0g.ai/product" target="_blank" rel="noreferrer">
-              About 0G private inference ↗
-            </a>
-          </div>
-        ) : null}
-        <p><Shield /><span>{isTerminal ? "Terminal outcome" : "Onchain status"}<b>{record.status}</b></span></p>
-        <div className={demoMode ? "demo-disclosure" : "live-disclosure"}>
-          {demoMode
-            ? "This receipt is local demo evidence. It is not mainnet settlement proof."
-            : "Live settlement is verified from the atomic Robinhood Chain operation and output-token transfers to your Investmade Wallet."}
-        </div>
-      </aside>
-    </main>
-  );
+	const showConfetti = useSettlementConfetti(record);
+
+	if (!record) {
+		return (
+			<main className="empty-page">
+				<h1>Activity</h1>
+				<p>
+					Your terminal settlement receipts will appear here. A quote or
+					transaction hash alone is never shown as settled.
+				</p>
+				<button
+					type="button"
+					className="button button-primary"
+					onClick={onStartNextBasket}
+				>
+					New basket
+				</button>
+			</main>
+		);
+	}
+	const isTerminal = ["SETTLED", "PARTIAL", "FAILED"].includes(record.status);
+	const successfulLegs = record.settledOutputs.filter(
+		(output) => output.status === "success",
+	).length;
+	const chainLabel =
+		record.plan.chain === "SOLANA" ? "Solana" : "Robinhood Chain";
+	const providerLabel = executionProviderLabel(record.plan.provider);
+	const receiptStatus = receiptCopy(
+		record.status,
+		selected.length,
+		successfulLegs,
+		demoMode,
+		chainLabel,
+		providerLabel,
+	);
+	const outputsByAssetId = new Map(
+		record.settledOutputs.map((output) => [output.assetId, output]),
+	);
+	const transactionHash = record.transactionHashes.at(-1);
+	const isPending = record.status === "SUBMITTED";
+	const isSettled = record.status === "SETTLED";
+	const stableToken = record.plan.chain === "SOLANA" ? "USDC" : "USDG";
+	const totalInput = formatUsd(
+		formatUnits(BigInt(record.plan.totalInputBaseUnits), 6),
+	);
+	const settledDescription = demoMode
+		? `${totalInput} was split across ${selected.length} demo assets. No transaction was broadcast.`
+		: `${totalInput} was split across ${successfulLegs} ${successfulLegs === 1 ? "asset" : "assets"} and added to your portfolio.`;
+	const receiptTitle = isSettled
+		? demoMode
+			? "Demo basket complete"
+			: "Basket settled"
+		: receiptStatus.title;
+	const receiptDescription = isSettled
+		? settledDescription
+		: receiptStatus.description;
+	const transactionUrl = transactionHash
+		? explorerUrl(transactionHash, record.plan.chain)
+		: undefined;
+
+	return (
+		<main className="receipt-page">
+			{showConfetti ? (
+				<Confetti
+					className="receipt-confetti"
+					options={{
+						colors: ["#baff00", "#111111", "#ffffff"],
+						gravity: 0.9,
+						particleCount: 120,
+						spread: 92,
+						startVelocity: 38,
+					}}
+				/>
+			) : null}
+			<header className="receipt-heading" aria-live="polite">
+				<span
+					className={`receipt-check ${isPending ? "pending" : record.status === "FAILED" ? "failed" : ""}`}
+				>
+					{isPending ? (
+						<LoaderCircle />
+					) : record.status === "FAILED" ? (
+						<span aria-hidden="true">!</span>
+					) : (
+						<Check />
+					)}
+				</span>
+				<div>
+					<h1>{receiptTitle}</h1>
+					<p>{receiptDescription}</p>
+				</div>
+			</header>
+			<div
+				className={`receipt-verification ${isPending ? "pending" : record.status === "FAILED" ? "failed" : ""}`}
+			>
+				{isPending ? <LoaderCircle /> : <Check />}
+				<b>
+					{isSettled
+						? demoMode
+							? "Verified local simulation"
+							: `Verified on ${chainLabel}`
+						: `${record.status.toLowerCase()} on ${chainLabel}`}
+				</b>
+			</div>
+			<section className="receipt-ledger">
+				<h2>What you bought</h2>
+				{selected.map((candidate) => {
+					const output = outputsByAssetId.get(candidate.assetId);
+					const isSuccess = output?.status === "success";
+					const quote =
+						candidate.quote ??
+						record.plan.quotes.find(
+							(candidateQuote) => candidateQuote.assetId === candidate.assetId,
+						);
+					const fullOutput =
+						isSuccess && output
+							? formatUnits(
+									BigInt(output.amountOutBaseUnits),
+									candidate.decimals,
+								)
+							: undefined;
+					return (
+						<div className="receipt-row" key={candidate.assetId}>
+							<AssetMark
+								symbol={candidate.symbol}
+								iconUrl={candidate.iconUrl}
+								size="sm"
+							/>
+							<div className="receipt-asset">
+								<b>{candidate.symbol}</b>
+								<small>
+									{quote
+										? `${formatUsd(formatUnits(BigInt(quote.amountInBaseUnits), 6))} allocation`
+										: `Allocation unavailable · ${stableToken}`}
+								</small>
+							</div>
+							<div
+								className={
+									isSuccess
+										? "receipt-output status-complete"
+										: output?.status === "failed"
+											? "receipt-output status-failed"
+											: "receipt-output status-pending"
+								}
+								title={
+									fullOutput
+										? `${fullOutput} ${candidate.symbol}`
+										: undefined
+								}
+							>
+								{isSuccess && output && fullOutput ? (
+									<>
+										<span>
+											{formatTokenAmount(fullOutput)} {candidate.symbol}
+										</span>
+										<small>received</small>
+									</>
+								) : output?.status === "failed" ? (
+									<span>Not settled</span>
+								) : isTerminal ? (
+									<span>No output recorded</span>
+								) : (
+									<span>Awaiting receipt</span>
+								)}
+							</div>
+						</div>
+					);
+				})}
+				{!selected.length ? (
+					<p className="receipt-missing-snapshot">
+						The operation is preserved, but its local card snapshot is
+						unavailable. Open the transaction receipt for the canonical
+						onchain details.
+					</p>
+				) : null}
+				{record.settledAt ? (
+					<p className="receipt-captured-at">
+						Settled {formatSettledAt(record.settledAt)}
+					</p>
+				) : null}
+			</section>
+			<section className="receipt-technical">
+				<details className="receipt-execution-details">
+					<summary>
+						<span className="receipt-detail-icon">
+							<SlidersHorizontal aria-hidden="true" />
+						</span>
+						<span>
+							<b>How this was executed</b>
+							<small>
+								{demoMode
+									? `${record.plan.quotes.length} simulated swaps`
+									: `One ${providerLabel} transaction · ${record.plan.quotes.length} swaps`}
+							</small>
+						</span>
+						<ChevronDown aria-hidden="true" />
+					</summary>
+					<div className="receipt-proof">
+						<p>
+							<Shield />
+							<span>
+								Execution provider<b>{providerLabel}</b>
+							</span>
+						</p>
+						<p>
+							<Shield />
+							<span>
+								Authorized plan
+								<b>{shortHash(record.plan.authorizedPlanHash)}</b>
+							</span>
+						</p>
+						<p>
+							<Shield />
+							<span>
+								Policy hash<b>{shortHash(record.plan.policyHash)}</b>
+							</span>
+						</p>
+						<p>
+							<Shield />
+							<span>
+								{demoMode ? "Ranking output" : "0G output"}
+								<b>
+									{feed
+										? shortHash(feed.proof.outputCommitment)
+										: "Feed snapshot unavailable"}
+								</b>
+							</span>
+						</p>
+						{!demoMode && feed?.proof.teeVerified ? (
+							<div className="receipt-proof-links">
+								<a
+									href={zeroGProviderUrl(feed.proof.provider)}
+									target="_blank"
+									rel="noreferrer"
+								>
+									View TEE provider on 0G Explorer ↗
+								</a>
+								<a
+									href="https://0g.ai/product"
+									target="_blank"
+									rel="noreferrer"
+								>
+									About 0G private inference ↗
+								</a>
+							</div>
+						) : null}
+						<div
+							className={demoMode ? "demo-disclosure" : "live-disclosure"}
+						>
+							{demoMode
+								? "This receipt is local demo evidence. It is not mainnet settlement proof."
+								: `Live settlement is verified from the atomic ${chainLabel} operation and output-token transfers to your Investmade Wallet.`}
+						</div>
+					</div>
+				</details>
+				<div className="receipt-transaction-row">
+					<span className="receipt-detail-icon">
+						<FileText aria-hidden="true" />
+					</span>
+					<span>
+						<b>Transaction receipt</b>
+						<small>
+							{transactionHash
+								? shortHash(transactionHash)
+								: "Awaiting operation hash"}
+						</small>
+					</span>
+					{transactionUrl && !demoMode ? (
+						<a
+							href={transactionUrl}
+							target="_blank"
+							rel="noreferrer"
+							aria-label={`View transaction on ${chainLabel}`}
+						>
+							<ExternalLink aria-hidden="true" />
+						</a>
+					) : null}
+				</div>
+			</section>
+			<div className="receipt-actions">
+				{isPending ? (
+					<button
+						type="button"
+						className="button button-primary"
+						onClick={() => void onResume()}
+					>
+						<RotateCcw aria-hidden="true" /> Check settlement
+					</button>
+				) : successfulLegs > 0 ? (
+					<button
+						type="button"
+						className="button button-primary"
+						onClick={onViewPortfolio}
+					>
+						See my portfolio
+					</button>
+				) : null}
+				<button
+					type="button"
+					className="button button-quiet"
+					onClick={onStartNextBasket}
+				>
+					Build another basket
+				</button>
+			</div>
+		</main>
+	);
 }
 
-function receiptCopy(status: ExecutionRecord["status"], totalLegs: number, successfulLegs: number, demoMode: boolean) {
-  if (status === "SUBMITTED") {
-    return { title: "Basket submitted", description: "Your Investmade Wallet broadcast one atomic operation. Waiting for Robinhood Chain settlement." };
-  }
-  if (status === "SETTLED") {
-    return demoMode
-      ? { title: "Demo complete", description: `All ${totalLegs} legs completed in local demo mode. No transaction was broadcast.` }
-      : { title: "Basket settled", description: `All ${totalLegs} legs reached a verified terminal state on Robinhood Chain.` };
-  }
-  if (status === "PARTIAL") {
-    return { title: "Basket partially settled", description: `${successfulLegs} of ${totalLegs} legs reached a verified terminal state. Review the receipt before trying again.` };
-  }
-  if (status === "FAILED") {
-    return { title: "Basket not settled", description: "No output-token transfer was verified for this basket. Your wallet remains the source of truth." };
-  }
-  return { title: "Basket prepared", description: "Fresh Uniswap calls are ready for your wallet confirmation." };
+function useSettlementConfetti(record?: ExecutionRecord) {
+	const [showConfetti, setShowConfetti] = useState(false);
+	const shownExecution = useRef<string | undefined>(undefined);
+
+	useEffect(() => {
+		if (record?.status !== "SETTLED") return;
+		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		const executionId = record.plan.executionId;
+		if (shownExecution.current !== executionId) {
+			const storageKey = `investmade:settlement-confetti:${executionId}`;
+			try {
+				if (sessionStorage.getItem(storageKey)) return;
+				sessionStorage.setItem(storageKey, "shown");
+			} catch {
+				// A blocked session store should not prevent the celebration.
+			}
+			shownExecution.current = executionId;
+		}
+		setShowConfetti(true);
+		const timer = window.setTimeout(() => setShowConfetti(false), 2600);
+		return () => window.clearTimeout(timer);
+	}, [record?.plan.executionId, record?.status]);
+
+	return showConfetti;
 }
 
-function explorerUrl(hash: string) {
-  return `https://robinhoodchain.blockscout.com/tx/${hash}`;
+function executionProviderLabel(provider: ExecutionRecord["plan"]["provider"]) {
+	if (provider === "ZERO_EX") return "0x";
+	if (provider === "JUPITER") return "Jupiter";
+	return "Uniswap";
+}
+
+function formatUsd(value: string) {
+	const amount = Number(value);
+	if (!Number.isFinite(amount)) return `$${value}`;
+	return new Intl.NumberFormat("en-US", {
+		style: "currency",
+		currency: "USD",
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	}).format(amount);
+}
+
+function formatTokenAmount(value: string) {
+	const [whole, fraction = ""] = value.split(".");
+	if (!fraction) return whole;
+	if (whole !== "0") {
+		const compact = fraction.slice(0, 6).replace(/0+$/, "");
+		return compact ? `${whole}.${compact}` : whole;
+	}
+	const firstNonZero = fraction.search(/[1-9]/);
+	if (firstNonZero === -1) return "0";
+	const compact = fraction
+		.slice(0, Math.min(fraction.length, firstNonZero + 5))
+		.replace(/0+$/, "");
+	return `0.${compact}`;
+}
+
+function formatSettledAt(value: string) {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return new Intl.DateTimeFormat("en-US", {
+		month: "short",
+		day: "numeric",
+		year: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	}).format(date);
+}
+
+function receiptCopy(
+	status: ExecutionRecord["status"],
+	totalLegs: number,
+	successfulLegs: number,
+	demoMode: boolean,
+	chainLabel: string,
+	providerLabel: string,
+) {
+	if (status === "SUBMITTED") {
+		return {
+			title: "Basket submitted",
+			description: `Your Investmade Wallet broadcast one atomic operation. Waiting for ${chainLabel} settlement.`,
+		};
+	}
+	if (status === "SETTLED") {
+		return demoMode
+			? {
+					title: "Demo complete",
+					description: `All ${totalLegs} legs completed in local demo mode. No transaction was broadcast.`,
+				}
+			: {
+					title: "Basket settled",
+					description: `All ${totalLegs} legs reached a verified terminal state on Robinhood Chain.`,
+				};
+	}
+	if (status === "PARTIAL") {
+		return {
+			title: "Basket partially settled",
+			description: `${successfulLegs} of ${totalLegs} legs reached a verified terminal state. Review the receipt before trying again.`,
+		};
+	}
+	if (status === "FAILED") {
+		return {
+			title: "Basket not settled",
+			description:
+				"No output-token transfer was verified for this basket. Your wallet remains the source of truth.",
+		};
+	}
+	return {
+		title: "Basket prepared",
+		description: `Fresh ${providerLabel} calls are ready for your wallet confirmation.`,
+	};
+}
+
+function explorerUrl(hash: string, chain: ExecutionRecord["plan"]["chain"]) {
+	return chain === "SOLANA"
+		? `https://explorer.solana.com/tx/${hash}`
+		: `https://robinhoodchain.blockscout.com/tx/${hash}`;
 }
 
 function zeroGProviderUrl(provider: string) {
-  return `https://explorer.0g.ai/mainnet/blockchain/accounts/${encodeURIComponent(provider)}`;
+	return `https://explorer.0g.ai/mainnet/blockchain/accounts/${encodeURIComponent(provider)}`;
 }
 
 function shortHash(hash: string) {
-  return hash.length > 20 ? `${hash.slice(0, 12)}…${hash.slice(-6)}` : hash;
+	return hash.length > 20 ? `${hash.slice(0, 12)}…${hash.slice(-6)}` : hash;
 }

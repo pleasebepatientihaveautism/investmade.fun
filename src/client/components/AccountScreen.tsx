@@ -1,7 +1,27 @@
-import { formatUnits } from "viem";
+import {
+	ArrowDownToLine,
+	CalendarDays,
+	Check,
+	CheckCircle2,
+	ChevronRight,
+	CircleDollarSign,
+	Coins,
+	Copy,
+	Info,
+	Plus,
+	ShieldCheck,
+	SlidersHorizontal,
+	Wallet,
+	X,
+} from "lucide-react";
+import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
-import { ArrowDownToLine, Check, Copy } from "lucide-react";
-import type { OnboardingPreferences } from "../../domain/schemas";
+import { formatUnits } from "viem";
+import type {
+	ExecutionProviderId,
+	FeedRankingProviderId,
+	OnboardingPreferences,
+} from "../../domain/schemas";
 import { formatTicketSizeUsd, isTicketSizeUsd } from "../../domain/schemas";
 import { api } from "../api";
 
@@ -13,6 +33,9 @@ export function AccountScreen({
 	fundingWallet,
 	preferences,
 	developerMode,
+	executionProviders,
+	solanaExecutionProviders,
+	feedRankingProviders,
 	onTopUp,
 	onResetDemoWeek,
 	onSave,
@@ -22,29 +45,57 @@ export function AccountScreen({
 	smartWalletReady: boolean;
 	preferences: OnboardingPreferences;
 	developerMode: boolean;
+	executionProviders: Record<ExecutionProviderId, { available: boolean }>;
+	solanaExecutionProviders: {
+		JUPITER: { available: boolean };
+		ZERO_EX: { available: boolean };
+	};
+	feedRankingProviders: Record<FeedRankingProviderId, { available: boolean }>;
 	onTopUp: () => void;
 	onResetDemoWeek: () => Promise<void>;
 	onSave: (preferences: OnboardingPreferences) => Promise<void>;
 }) {
 	const [draft, setDraft] = useState(preferences);
 	const [balance, setBalance] = useState<string>();
+	const [solBalance, setSolBalance] = useState<string>();
 	const [balanceError, setBalanceError] = useState("");
 	const [saveError, setSaveError] = useState("");
 	const [saving, setSaving] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [systemSettingsOpen, setSystemSettingsOpen] = useState(false);
+	const [solanaTopUpOpen, setSolanaTopUpOpen] = useState(false);
 	const [addressCopied, setAddressCopied] = useState<"smart" | "funding">();
 
 	useEffect(() => setDraft(preferences), [preferences]);
 
 	useEffect(() => {
-		if (!wallet) return;
+		if (!wallet) {
+			setBalance(undefined);
+			setSolBalance(undefined);
+			setBalanceError("");
+			return;
+		}
 		let cancelled = false;
 		setBalance(undefined);
+		setSolBalance(undefined);
 		setBalanceError("");
-		api
-			.usdgBalance(wallet)
-			.then(({ balanceBaseUnits, decimals }) => {
-				if (!cancelled)
-					setBalance(formatUnits(BigInt(balanceBaseUnits), decimals));
+		const balanceRequest =
+			preferences.activeChain === "SOLANA"
+				? api.solanaBalance(wallet).then(
+						({ usdcBalanceBaseUnits, usdcDecimals, solBalanceLamports }) => ({
+							balance: formatUnits(BigInt(usdcBalanceBaseUnits), usdcDecimals),
+							solBalance: formatUnits(BigInt(solBalanceLamports), 9),
+						}),
+					)
+				: api.usdgBalance(wallet).then(({ balanceBaseUnits, decimals }) => ({
+						balance: formatUnits(BigInt(balanceBaseUnits), decimals),
+						solBalance: undefined,
+					}));
+		balanceRequest
+			.then(({ balance: nextBalance, solBalance: nextSolBalance }) => {
+				if (cancelled) return;
+				setBalance(nextBalance);
+				setSolBalance(nextSolBalance);
 			})
 			.catch((caught) => {
 				if (!cancelled)
@@ -57,14 +108,22 @@ export function AccountScreen({
 		return () => {
 			cancelled = true;
 		};
-	}, [wallet]);
+	}, [preferences.activeChain, wallet]);
 
 	async function save() {
 		setSaveError("");
 		setSaving(true);
 		try {
-			const next = { ...draft, riskDisclosureAccepted: true as const };
+			const next = {
+				...draft,
+				feedRankingProvider: feedRankingProviders.ZERO_G.available
+					? draft.feedRankingProvider
+					: ("DETERMINISTIC" as const),
+				riskDisclosureAccepted: true as const,
+			};
 			await onSave(next);
+			setSettingsOpen(false);
+			setSystemSettingsOpen(false);
 		} catch (caught) {
 			setSaveError(
 				caught instanceof Error ? caught.message : "Could not save settings.",
@@ -92,97 +151,78 @@ export function AccountScreen({
 		window.setTimeout(() => setAddressCopied(undefined), 1_800);
 	}
 
+	function topUp() {
+		if (!wallet) return;
+		if (preferences.activeChain === "SOLANA") {
+			setSolanaTopUpOpen(true);
+			return;
+		}
+		onTopUp();
+	}
+
+	function closeSettings(open: boolean) {
+		if (saving) return;
+		setSettingsOpen(open);
+		if (!open) {
+			setDraft(preferences);
+			setSaveError("");
+		}
+	}
+
+	function closeSystemSettings(open: boolean) {
+		if (saving) return;
+		setSystemSettingsOpen(open);
+		if (!open) {
+			setDraft(preferences);
+			setSaveError("");
+		}
+	}
+
 	return (
 		<main className="account-page">
 			<header className="account-heading">
-				<span>Account</span>
-				<h1>Your wallet, your plan.</h1>
+				<span>Account command center</span>
+				<h1>Ready to invest.</h1>
 				<p>
-					Change the preferences that shape your next investment session.
-					Nothing trades until you review and sign.
+					Everything you need to manage your wallet, rules, and next basket in
+					one place.
 				</p>
 			</header>
 
-			<section
-				className="account-balance"
-				aria-label="Investmade Wallet USDG balance"
-			>
+			<section className="account-balance" aria-labelledby="balance-title">
 				<div>
-					<span className="account-label">
-						Investmade Wallet · USDG balance
+					<span className="account-label" id="balance-title">
+						Investing balance
 					</span>
 					<strong>
 						{balance === undefined
 							? balanceError
 								? "—"
 								: "Loading…"
-							: `${balance} USDG`}
+							: `${formatAccountBalance(balance)} ${preferences.activeChain === "SOLANA" ? "USDC" : "USDG"}`}
 					</strong>
-					<small>
-						{balanceError ||
-							"This smart wallet holds your USDG and executes each atomic basket."}
-					</small>
+					{preferences.activeChain === "SOLANA" && solBalance !== undefined ? (
+						<small>{formatAccountBalance(solBalance)} SOL available for fees</small>
+					) : null}
 				</div>
 				<div className="account-address">
-					<code>{wallet ? shortAddress(wallet) : "Wallet not activated"}</code>
-					{wallet ? (
-						<button
-							type="button"
-							className="copy-address"
-							aria-label={
-								addressCopied === "smart"
-									? "Address copied"
-									: "Copy Investmade Wallet address"
-							}
-							title={addressCopied === "smart" ? "Copied" : "Copy address"}
-							onClick={() => void copyAddress(wallet, "smart")}
-						>
-							{addressCopied === "smart" ? (
-								<Check aria-hidden="true" />
-							) : (
-								<Copy aria-hidden="true" />
-							)}
-						</button>
-					) : null}
-					<button
-						type="button"
-						className="button button-top-up"
-						onClick={onTopUp}
-						disabled={!wallet || !fundingWallet}
-					>
-						Top up <ArrowDownToLine aria-hidden="true" />
-					</button>
-				</div>
-			</section>
-
-			<section className="wallet-identity-grid" aria-label="Wallet roles">
-				<article>
-					<div className="wallet-role-heading">
-						<span className="account-label">Connected signer</span>
-						<span className={fundingWallet ? "wallet-ready" : "wallet-pending"}>
-							{fundingWallet ? "Connected" : "Optional"}
-						</span>
-					</div>
-					<h2>Funding wallet</h2>
-					<div className="wallet-role-address">
+					<div className="account-address-row">
 						<code>
-							{fundingWallet
-								? shortAddress(fundingWallet)
-								: "Use Privy login only"}
+							{wallet ? shortAddress(wallet) : "Wallet not activated"}
 						</code>
-						{fundingWallet ? (
+						{wallet ? (
 							<button
 								type="button"
-								className="copy-address copy-address-compact"
+								className="copy-address"
 								aria-label={
-									addressCopied === "funding"
+									addressCopied === "smart"
 										? "Address copied"
-										: "Copy funding wallet address"
+										: "Copy Investmade Wallet address"
 								}
-								title={addressCopied === "funding" ? "Copied" : "Copy address"}
-								onClick={() => void copyAddress(fundingWallet, "funding")}
+								title={addressCopied === "smart" ? "Copied" : "Copy address"}
+								onClick={() => void copyAddress(wallet, "smart")}
 							>
-								{addressCopied === "funding" ? (
+								{addressCopied === "smart" ? (
 									<Check aria-hidden="true" />
 								) : (
 									<Copy aria-hidden="true" />
@@ -190,160 +230,621 @@ export function AccountScreen({
 							</button>
 						) : null}
 					</div>
-					<p>
-						Your Rainbow or other external wallet can fund the Investmade
-						Wallet. It does not execute basket legs directly.
-					</p>
-				</article>
-			</section>
-
-			<section className="account-settings" aria-labelledby="settings-title">
-				<div className="settings-intro">
-					<div>
-						<span className="account-label">Investment settings</span>
-						<h2 id="settings-title">Your next session</h2>
-					</div>
-					<span className="settings-limit">
-						{formatTicketSizeUsd(draft.periodLimitUsd ?? 100)} USDG period limit
-					</span>
-				</div>
-
-				<div className="settings-field">
-					<span>When does your DCA session reset?</span>
-					<SelectMenu
-						ariaLabel="When does your DCA session reset? A new session is available once per selected period."
-						value={draft.cadence}
-						options={CADENCE_OPTIONS.map((cadence) => ({
-							value: cadence,
-							label: `Every ${cadence === "daily" ? "day" : cadence === "weekly" ? "week" : "month"}`,
-						}))}
-						onChange={(cadence) =>
-							setDraft((current) => ({
-								...current,
-								cadence: cadence as OnboardingPreferences["cadence"],
-							}))
-						}
-					/>
-					<small>A new session is available once per selected period.</small>
-				</div>
-
-				<label className="settings-field">
-					<span>Ticket size per accepted card</span>
-					<div className="ticket-input">
-						<b>$</b>
-						<input
-							type="number"
-							min="0.1"
-							max={draft.periodLimitUsd ?? 100}
-							step="0.01"
-							inputMode="decimal"
-							value={formatTicketSizeUsd(draft.ticketSizeUsd)}
-							onChange={(event) =>
-								setDraft((current) => ({
-									...current,
-									ticketSizeUsd: clampTicket(event.target.value),
-								}))
-							}
-						/>
-					</div>
-					<small>
-						USDG amount from $0.10 to $
-						{formatTicketSizeUsd(draft.periodLimitUsd ?? 100)}, in $0.01 increments.
-					</small>
-				</label>
-
-				<fieldset className="settings-field">
-					<legend>Risk preference</legend>
-					<div className="settings-options">
-						{RISK_OPTIONS.map((risk) => (
-							<label
-								key={risk}
-								className={draft.riskMode === risk ? "selected" : ""}
-							>
-								<input
-									type="radio"
-									name="risk"
-									checked={draft.riskMode === risk}
-									onChange={() =>
-										setDraft((current) => ({ ...current, riskMode: risk }))
-									}
-								/>
-								<b>{risk}</b>
-							</label>
-						))}
-					</div>
-				</fieldset>
-
-				<fieldset className="settings-field">
-					<legend>Assets to include</legend>
-					<div className="settings-options">
-						{(["CRYPTO", "STOCK_TOKEN"] as const).map((assetClass) => {
-							const selected = draft.assetClasses.includes(assetClass);
-							return (
-								<label key={assetClass} className={selected ? "selected" : ""}>
-									<input
-										type="checkbox"
-										checked={selected}
-										onChange={() =>
-											setDraft((current) => ({
-												...current,
-												assetClasses: selected
-													? current.assetClasses.filter(
-															(item) => item !== assetClass,
-														)
-													: [...current.assetClasses, assetClass],
-											}))
-										}
-									/>
-									<b>
-										{assetClass === "CRYPTO" ? "Crypto" : "Tokenized stocks"}
-									</b>
-								</label>
-							);
-						})}
-					</div>
-					{!draft.assetClasses.length ? (
-						<small className="settings-error">
-							Choose at least one asset type.
-						</small>
-					) : null}
-				</fieldset>
-
-				<div className="settings-actions">
-					{saveError ? <p role="alert">{saveError}</p> : null}
 					<button
 						type="button"
-						className="button button-primary"
-						disabled={saving || !draft.assetClasses.length}
-						onClick={save}
+						className="button button-top-up"
+						onClick={topUp}
+						disabled={
+							!wallet ||
+							(preferences.activeChain !== "SOLANA" && !fundingWallet)
+						}
 					>
-						{saving ? "Saving…" : "Save and refresh my feed"}
+						Top up <ArrowDownToLine aria-hidden="true" />
 					</button>
 				</div>
 			</section>
 
-			{developerMode ? (
-				<section
-					className="account-settings"
-					aria-labelledby="developer-settings-title"
-				>
-					<div className="settings-intro">
-						<div>
-							<span className="account-label">Local developer controls</span>
-							<h2 id="developer-settings-title">Test another basket</h2>
+			<Dialog.Root open={solanaTopUpOpen} onOpenChange={setSolanaTopUpOpen}>
+				<Dialog.Portal>
+					<Dialog.Overlay className="send-dialog-overlay" />
+					<Dialog.Content className="send-dialog-content account-top-up-dialog">
+						<div className="send-dialog-header">
+							<div>
+								<span className="account-label">Solana wallet</span>
+								<Dialog.Title>Top up USDC</Dialog.Title>
+								<Dialog.Description>
+									Send USDC on Solana to your Investmade Wallet.
+								</Dialog.Description>
+							</div>
+							<Dialog.Close asChild>
+								<button
+									type="button"
+									className="send-dialog-close"
+									aria-label="Close top up"
+								>
+									<X aria-hidden="true" />
+								</button>
+							</Dialog.Close>
 						</div>
-						<span className="settings-limit">Local only</span>
+						<div className="account-top-up-wallet">
+							<span>Deposit address</span>
+							<code>{wallet}</code>
+							<button
+								type="button"
+								className="button button-top-up account-top-up-copy"
+								onClick={() => void copyAddress(wallet, "smart")}
+							>
+								{addressCopied === "smart" ? (
+									<>
+										Copied <Check aria-hidden="true" />
+									</>
+								) : (
+									<>
+										Copy address <Copy aria-hidden="true" />
+									</>
+								)}
+							</button>
+						</div>
+						<p className="account-top-up-note">
+							<Info aria-hidden="true" />
+							<span>
+								Only send USDC on Solana to this address. Keep some SOL in the
+								wallet for network fees.
+							</span>
+						</p>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog.Root>
+
+			<section
+				className="account-command-section"
+				aria-labelledby="wallet-title"
+			>
+				<h2 id="wallet-title">Wallets</h2>
+				<div className="account-wallet-list">
+					<article className="account-wallet-row">
+						<span className="account-row-icon account-row-icon-acid">
+							<ShieldCheck aria-hidden="true" />
+						</span>
+						<div className="account-row-copy">
+							<strong>Investmade Wallet</strong>
+							<div className="wallet-role-address">
+								<code>{wallet ? shortAddress(wallet) : "Not activated"}</code>
+								{wallet ? (
+									<button
+										type="button"
+										className="copy-address copy-address-compact"
+										aria-label={
+											addressCopied === "smart"
+												? "Address copied"
+												: "Copy Investmade Wallet address"
+										}
+										onClick={() => void copyAddress(wallet, "smart")}
+									>
+										{addressCopied === "smart" ? (
+											<Check aria-hidden="true" />
+										) : (
+											<Copy aria-hidden="true" />
+										)}
+									</button>
+								) : null}
+							</div>
+							<span className="account-network">
+								{preferences.activeChain === "SOLANA"
+									? "Solana Mainnet"
+									: "Robinhood Chain"}
+							</span>
+							<small>
+								<CheckCircle2 aria-hidden="true" /> Executes approved
+								investments.
+							</small>
+						</div>
+						<ChevronRight className="account-row-chevron" aria-hidden="true" />
+					</article>
+
+					<article className="account-wallet-row">
+						<span className="account-row-icon">
+							<Wallet aria-hidden="true" />
+						</span>
+						<div className="account-row-copy">
+							<strong>External wallet</strong>
+							<div className="wallet-role-address">
+								<code>
+									{fundingWallet
+										? shortAddress(fundingWallet)
+										: "No wallet connected"}
+								</code>
+								{fundingWallet ? (
+									<button
+										type="button"
+										className="copy-address copy-address-compact"
+										aria-label={
+											addressCopied === "funding"
+												? "Address copied"
+												: "Copy funding wallet address"
+										}
+										onClick={() => void copyAddress(fundingWallet, "funding")}
+									>
+										{addressCopied === "funding" ? (
+											<Check aria-hidden="true" />
+										) : (
+											<Copy aria-hidden="true" />
+										)}
+									</button>
+								) : null}
+							</div>
+							<small>
+								<Info aria-hidden="true" /> Funding only. Never executes
+								investments.
+							</small>
+						</div>
+						<ChevronRight className="account-row-chevron" aria-hidden="true" />
+					</article>
+				</div>
+			</section>
+
+			<section
+				className="account-command-section"
+				aria-labelledby="settings-title"
+			>
+				<div className="account-command-heading">
+					<h2 id="settings-title">Your investing rules</h2>
+					<button
+						type="button"
+						className="account-edit-button"
+						aria-expanded={settingsOpen}
+						onClick={() => setSettingsOpen(true)}
+					>
+						Edit <ChevronRight aria-hidden="true" />
+					</button>
+				</div>
+
+				<div className="account-rules-list">
+					<div>
+						<CalendarDays aria-hidden="true" />
+						<span>Invest</span>
+						<strong>
+							Every{" "}
+							{draft.cadence === "daily"
+								? "day"
+								: draft.cadence === "weekly"
+									? "week"
+									: "month"}
+						</strong>
 					</div>
-					<div className="settings-actions">
-						<button
-							type="button"
-							className="button button-outline"
-							onClick={() => void onResetDemoWeek()}
-						>
-							Build a new local basket
-						</button>
+					<div>
+						<CircleDollarSign aria-hidden="true" />
+						<span>
+							{draft.cadence === "weekly"
+								? "Weekly limit"
+								: draft.cadence === "daily"
+									? "Daily limit"
+									: "Monthly limit"}
+						</span>
+						<strong>${formatTicketSizeUsd(draft.periodLimitUsd ?? 100)}</strong>
 					</div>
-				</section>
+					<div>
+						<SlidersHorizontal aria-hidden="true" />
+						<span>Per swipe</span>
+						<strong>${formatTicketSizeUsd(draft.ticketSizeUsd)}</strong>
+					</div>
+					<div>
+						<ShieldCheck aria-hidden="true" />
+						<span>Risk profile</span>
+						<strong className="text-capitalize">{draft.riskMode}</strong>
+					</div>
+					<div>
+						<Coins aria-hidden="true" />
+						<span>Asset focus</span>
+						<strong>
+							{draft.assetClasses.length === 2
+								? "Crypto + tokenized stocks"
+								: draft.assetClasses[0] === "CRYPTO"
+									? "Crypto"
+									: draft.assetClasses[0] === "STOCK_TOKEN"
+										? "Tokenized stocks"
+										: "None selected"}
+						</strong>
+					</div>
+				</div>
+
+				<Dialog.Root open={settingsOpen} onOpenChange={closeSettings}>
+					<Dialog.Portal>
+						<Dialog.Overlay className="send-dialog-overlay" />
+						<Dialog.Content className="send-dialog-content account-settings-dialog">
+							<div className="send-dialog-header">
+								<div>
+									<span className="account-label">Your investing rules</span>
+									<Dialog.Title>Edit investing rules</Dialog.Title>
+									<Dialog.Description>
+										Change the preferences that shape your next investment
+										session.
+									</Dialog.Description>
+								</div>
+								<Dialog.Close asChild>
+									<button
+										type="button"
+										className="send-dialog-close"
+										aria-label="Close investment settings"
+										disabled={saving}
+									>
+										<X aria-hidden="true" />
+									</button>
+								</Dialog.Close>
+							</div>
+
+							<div className="account-settings account-settings-form">
+								<div className="settings-field">
+									<span>When does your DCA session reset?</span>
+									<SelectMenu
+										ariaLabel="When does your DCA session reset? A new session is available once per selected period."
+										value={draft.cadence}
+										options={CADENCE_OPTIONS.map((cadence) => ({
+											value: cadence,
+											label: `Every ${cadence === "daily" ? "day" : cadence === "weekly" ? "week" : "month"}`,
+										}))}
+										onChange={(cadence) =>
+											setDraft((current) => ({
+												...current,
+												cadence: cadence as OnboardingPreferences["cadence"],
+											}))
+										}
+									/>
+									<small>
+										A new session is available once per selected period.
+									</small>
+								</div>
+
+								<label className="settings-field">
+									<span>Ticket size per accepted card</span>
+									<div className="ticket-input">
+										<b>$</b>
+										<input
+											type="number"
+											min="0.1"
+											max={draft.periodLimitUsd ?? 100}
+											step="0.01"
+											inputMode="decimal"
+											value={formatTicketSizeUsd(draft.ticketSizeUsd)}
+											onChange={(event) =>
+												setDraft((current) => ({
+													...current,
+													ticketSizeUsd: clampTicket(event.target.value),
+												}))
+											}
+										/>
+									</div>
+									<small>
+										{draft.activeChain === "SOLANA" ? "USDC" : "USDG"} amount
+										from $0.10 to $
+										{formatTicketSizeUsd(draft.periodLimitUsd ?? 100)}, in $0.01
+										increments.
+									</small>
+								</label>
+
+								<fieldset className="settings-field">
+									<legend>Risk preference</legend>
+									<div className="settings-options">
+										{RISK_OPTIONS.map((risk) => (
+											<label
+												key={risk}
+												className={draft.riskMode === risk ? "selected" : ""}
+											>
+												<input
+													type="radio"
+													name="risk"
+													checked={draft.riskMode === risk}
+													onChange={() =>
+														setDraft((current) => ({
+															...current,
+															riskMode: risk,
+														}))
+													}
+												/>
+												<b>{risk}</b>
+											</label>
+										))}
+									</div>
+								</fieldset>
+
+								<fieldset className="settings-field">
+									<legend>Assets to include</legend>
+									<div className="settings-options">
+										{(["CRYPTO", "STOCK_TOKEN"] as const).map((assetClass) => {
+											const selected = draft.assetClasses.includes(assetClass);
+											return (
+												<label
+													key={assetClass}
+													className={selected ? "selected" : ""}
+												>
+													<input
+														type="checkbox"
+														checked={selected}
+														onChange={() =>
+															setDraft((current) => ({
+																...current,
+																assetClasses: selected
+																	? current.assetClasses.filter(
+																			(item) => item !== assetClass,
+																		)
+																	: [...current.assetClasses, assetClass],
+															}))
+														}
+													/>
+													<b>
+														{assetClass === "CRYPTO"
+															? "Crypto"
+															: "Tokenized stocks"}
+													</b>
+												</label>
+											);
+										})}
+									</div>
+									{!draft.assetClasses.length ? (
+										<small className="settings-error">
+											Choose at least one asset type.
+										</small>
+									) : null}
+								</fieldset>
+
+								<div className="settings-actions">
+									{saveError ? <p role="alert">{saveError}</p> : null}
+									<Dialog.Close asChild>
+										<button
+											type="button"
+											className="button button-outline"
+											disabled={saving}
+										>
+											Cancel
+										</button>
+									</Dialog.Close>
+									<button
+										type="button"
+										className="button button-primary"
+										disabled={saving || !draft.assetClasses.length}
+										onClick={save}
+									>
+										{saving ? "Saving…" : "Save and refresh my feed"}
+									</button>
+								</div>
+							</div>
+						</Dialog.Content>
+					</Dialog.Portal>
+				</Dialog.Root>
+			</section>
+
+			<section
+				className="account-command-section"
+				aria-labelledby="system-settings-title"
+			>
+				<div className="account-command-heading">
+					<h2 id="system-settings-title">Settings</h2>
+					<button
+						type="button"
+						className="account-edit-button"
+						aria-expanded={systemSettingsOpen}
+						onClick={() => setSystemSettingsOpen(true)}
+					>
+						Edit <ChevronRight aria-hidden="true" />
+					</button>
+				</div>
+				<div className="account-rules-list">
+					<div>
+						<SlidersHorizontal aria-hidden="true" />
+						<span>Execution provider</span>
+						<strong>{executionProviderLabel(draft.executionProvider)}</strong>
+					</div>
+					<div>
+						<ShieldCheck aria-hidden="true" />
+						<span>Feed ranking</span>
+						<strong>
+							{draft.feedRankingProvider === "ZERO_G" &&
+							feedRankingProviders.ZERO_G.available
+								? "Private AI via 0G"
+								: "Deterministic"}
+						</strong>
+					</div>
+				</div>
+
+				<Dialog.Root
+					open={systemSettingsOpen}
+					onOpenChange={closeSystemSettings}
+				>
+					<Dialog.Portal>
+						<Dialog.Overlay className="send-dialog-overlay" />
+						<Dialog.Content className="send-dialog-content account-settings-dialog">
+							<div className="send-dialog-header">
+								<div>
+									<span className="account-label">Settings</span>
+									<Dialog.Title>Feed and execution</Dialog.Title>
+									<Dialog.Description>
+										Choose how assets are ranked and where swaps are executed.
+									</Dialog.Description>
+								</div>
+								<Dialog.Close asChild>
+									<button
+										type="button"
+										className="send-dialog-close"
+										aria-label="Close settings"
+										disabled={saving}
+									>
+										<X aria-hidden="true" />
+									</button>
+								</Dialog.Close>
+							</div>
+
+							<div className="account-settings account-settings-form">
+								<fieldset className="settings-field execution-provider-setting">
+									<legend>Execution provider</legend>
+									<p>Choose where Investmade finds and executes your swaps.</p>
+									<div className="execution-provider-options">
+										{draft.activeChain === "SOLANA" ? (
+											([
+												{
+													id: "JUPITER",
+													name: "Jupiter",
+													description: "Jupiter liquidity and routing on Solana.",
+												},
+												{
+													id: "ZERO_EX",
+													name: "0x",
+													description: "Aggregated Solana liquidity through 0x.",
+												},
+											] as const).map((provider) => {
+												const available = solanaExecutionProviders[provider.id].available;
+												return (
+													<label
+														key={provider.id}
+														className={draft.executionProvider === provider.id ? "selected" : ""}
+													>
+														<input
+															type="radio"
+															name="execution-provider"
+															checked={draft.executionProvider === provider.id}
+															disabled={!available}
+															onChange={() =>
+																setDraft((current) => ({
+																	...current,
+																	executionProvider: provider.id,
+																	solanaExecutionProvider: provider.id,
+																}))
+															}
+														/>
+														<span>
+															<b>{provider.name}</b>
+															<small>{provider.description}</small>
+															{!available ? <em>API not configured</em> : null}
+														</span>
+													</label>
+												);
+											})
+										) : (
+											(
+												[
+													{
+														id: "ZERO_EX",
+														name: "0x",
+														description:
+															"Aggregated liquidity across Robinhood Chain.",
+													},
+													{
+														id: "UNISWAP",
+														name: "Uniswap",
+														description: "Uniswap liquidity and routing.",
+													},
+												] as const
+											).map((provider) => {
+												const available =
+													executionProviders[provider.id].available;
+												return (
+													<label
+														key={provider.id}
+														className={
+															draft.executionProvider === provider.id
+																? "selected"
+																: ""
+														}
+													>
+														<input
+															type="radio"
+															name="execution-provider"
+															checked={draft.executionProvider === provider.id}
+															disabled={!available}
+															onChange={() =>
+																setDraft((current) => ({
+															...current,
+															executionProvider: provider.id,
+															robinhoodExecutionProvider: provider.id,
+																}))
+															}
+														/>
+														<span>
+															<b>{provider.name}</b>
+															<small>{provider.description}</small>
+															{!available ? <em>API not configured</em> : null}
+														</span>
+													</label>
+												);
+											})
+										)}
+									</div>
+									<small>
+										Changing provider applies to your next basket. Prepared
+										quotes will be refreshed.
+									</small>
+								</fieldset>
+
+								<label className="settings-field feed-ranking-setting">
+									<span>Use 0G private AI ranking</span>
+									<input
+										type="checkbox"
+										role="switch"
+										checked={
+											feedRankingProviders.ZERO_G.available &&
+											draft.feedRankingProvider === "ZERO_G"
+										}
+										aria-checked={
+											feedRankingProviders.ZERO_G.available &&
+											draft.feedRankingProvider === "ZERO_G"
+										}
+										disabled={!feedRankingProviders.ZERO_G.available}
+										onChange={(event) =>
+											setDraft((current) => ({
+												...current,
+												feedRankingProvider: event.target.checked
+													? "ZERO_G"
+													: "DETERMINISTIC",
+											}))
+										}
+									/>
+									<small>
+										{feedRankingProviders.ZERO_G.available
+											? "Turn off to rank locally without making an outbound 0G request."
+											: "0G is unavailable. Deterministic ranking will be used."}
+									</small>
+								</label>
+
+								<div className="settings-actions">
+									{saveError ? <p role="alert">{saveError}</p> : null}
+									<Dialog.Close asChild>
+										<button
+											type="button"
+											className="button button-outline"
+											disabled={saving}
+										>
+											Cancel
+										</button>
+									</Dialog.Close>
+									<button
+										type="button"
+										className="button button-primary"
+										disabled={saving}
+										onClick={save}
+									>
+										{saving ? "Saving…" : "Save and refresh my feed"}
+									</button>
+								</div>
+							</div>
+						</Dialog.Content>
+					</Dialog.Portal>
+				</Dialog.Root>
+			</section>
+
+			{developerMode ? (
+				<button
+					type="button"
+					className="account-build-button"
+					onClick={() => void onResetDemoWeek()}
+				>
+					<span className="account-row-icon account-row-icon-acid">
+						<Plus aria-hidden="true" />
+					</span>
+					<div>
+						<strong>Build another basket</strong>
+						<small>Create a new basket with AI guidance</small>
+					</div>
+					<ChevronRight aria-hidden="true" />
+				</button>
 			) : null}
 		</main>
 	);
@@ -419,4 +920,18 @@ function clampTicket(value: string) {
 
 function shortAddress(address: string) {
 	return `${address.slice(0, 10)}…${address.slice(-8)}`;
+}
+
+function formatAccountBalance(value: string) {
+	const [whole, fraction = ""] = value.split(".");
+	const compactFraction = fraction.slice(0, 6).replace(/0+$/, "");
+	return compactFraction ? `${whole}.${compactFraction}` : whole;
+}
+
+function executionProviderLabel(provider: ExecutionProviderId) {
+	return provider === "ZERO_EX"
+		? "0x"
+		: provider === "JUPITER"
+			? "Jupiter"
+			: "Uniswap";
 }

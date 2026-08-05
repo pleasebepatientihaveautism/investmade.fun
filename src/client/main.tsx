@@ -1,16 +1,31 @@
 import { StrictMode, useEffect, useState } from "react";
+import { preload } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { PrivyProvider } from "@privy-io/react-auth";
+import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { SmartWalletsProvider } from "@privy-io/react-auth/smart-wallets";
+import {
+  createSolanaRpc,
+  createSolanaRpcSubscriptions
+} from "@solana/kit";
 import { defineChain } from "viem";
 import "@fontsource/archivo-black/400.css";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
 import "@fontsource/dm-sans/700.css";
+import "@fontsource/instrument-serif/400-italic.css";
+import "@fontsource/instrument-serif/400.css";
+import instrumentSerifRegularUrl from "@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2?url";
 import { App } from "./App";
 import { api, type PublicConfig } from "./api";
 import "./styles.css";
+
+preload(instrumentSerifRegularUrl, {
+  as: "font",
+  crossOrigin: "anonymous",
+  type: "font/woff2"
+});
 
 const robinhoodChain = defineChain({
   id: 4663,
@@ -53,13 +68,42 @@ function Root() {
         loginMethods: ["email", "wallet"],
         appearance: {
           theme: "light",
-          accentColor: "#baff00"
+          accentColor: "#baff00",
+          walletChainType: "ethereum-and-solana",
+          walletList: [
+            "rainbow",
+            "metamask",
+            "coinbase_wallet",
+            "detected_ethereum_wallets",
+            "phantom",
+            "solflare",
+            "backpack",
+            "jupiter",
+            "detected_solana_wallets",
+            "wallet_connect_qr_solana"
+          ]
         },
-        defaultChain: robinhoodChain,
+        externalWallets: {
+          solana: {
+            connectors: toSolanaWalletConnectors({ shouldAutoConnect: false })
+          }
+        },
         supportedChains: [robinhoodChain],
         embeddedWallets: {
-          ethereum: { createOnLogin: "all-users" }
-        }
+          ethereum: { createOnLogin: "all-users" },
+          solana: { createOnLogin: "all-users" }
+        },
+        solana: {
+          rpcs: {
+            "solana:mainnet": {
+              rpc: createSolanaRpc(`${window.location.origin}/api/solana/rpc`),
+              rpcSubscriptions: createSolanaRpcSubscriptions(
+                "wss://api.mainnet-beta.solana.com"
+              ),
+              blockExplorerUrl: "https://explorer.solana.com"
+            }
+          }
+        },
       }}
     >
       <SmartWalletsProvider>

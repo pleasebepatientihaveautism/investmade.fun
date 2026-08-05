@@ -9,9 +9,9 @@
 | State | `MemoryStateStore` | `MemoryStateStore` | `PostgresStateStore` |
 | Candidates | `DemoProvider` | `LiveCandidateProvider` | `LiveCandidateProvider` |
 | Ranking | `ZeroGProvider` when configured, otherwise `DemoProvider` | `ZeroGProvider` when configured, otherwise `DemoProvider` | `ZeroGProvider` required by configuration |
-| Buy execution | `DemoProvider` | `UniswapProvider` | `UniswapProvider` |
+| Buy execution | `DemoProvider` | `ZeroExProvider` | `ZeroExProvider` |
 | Icons | CoinGecko provider with local fallback behavior | Same | Same |
-| Price history | Demo history | Demo history because demo mode is active | Graph/Substreams provider when configured |
+| Card prices and history | CoinGecko with demo fallback | CoinGecko | CoinGecko |
 
 ```mermaid
 flowchart LR
@@ -19,14 +19,11 @@ flowchart LR
   P --> E["Embedded signer"]
   E --> W["Investmade ERC-4337 wallet"]
   W --> A["Privy access token plus wallet address"]
-  A --> O{"World fully configured?"}
-  O -->|"yes"| H["World proof bound to wallet"]
-  O -->|"no"| S["Cadence session"]
-  H --> S
+  A --> S["Cadence session"]
   S --> R["Canonical asset registry"]
   R --> C["Contract and Robinhood market checks"]
-  C --> Q["Uniswap permission and exact-size quote"]
-  Q --> Z["0G or local bounded ranking"]
+  C --> M["Batched CoinGecko market data"]
+  M --> Z["0G or local bounded ranking"]
   Z --> D["Deterministic feed policy"]
   D --> UI["Cards and basket review"]
   UI --> F["Fresh quotes and wallet calls"]
@@ -58,7 +55,6 @@ The Express API exposes:
 - `GET /api/health` and `GET /api/config`
 - public asset icon/history reads
 - USDG balance reads
-- optional World signature and verification
 - cadence session open
 - feed generation
 - execution prepare, demo settle, submitted marker, reconciliation, and execution read
@@ -68,14 +64,16 @@ Production and local-live requests use Privy bearer authentication. The server v
 
 ## Candidate discovery
 
-The live candidate provider starts with `ASSET_REGISTRY`, applies user exclusions and risk-mode community-asset rules, and discovers up to ten candidates per page.
+The live candidate provider starts with `ASSET_REGISTRY`, applies user exclusions and risk-mode community-asset rules, and discovers up to thirty candidates for ranking and ten cards per page.
 
-For every asset it requires deployed contract code and a fresh exact-size Uniswap quote. Stock-token routes also require:
+For every card it requires deployed contract code and CoinGecko market data. Stock-token cards also require:
 
 - active Robinhood asset/deployment metadata for chain `4663`;
 - a non-halted price record;
 - an unpaused onchain oracle;
-- wallet-specific Uniswap permission.
+- exact-ticket 0x AllowanceHolder liquidity and token authorization.
+
+Feed generation requests a short-lived exact-ticket 0x `/price` check before displaying a card. Allowance and balance warnings are ignored at browsing time, while liquidity and token errors fail closed. Selected assets receive fresh executable `/quote` responses only in Review.
 
 Production rejects stale Robinhood price evidence. Local-live accepts an active, non-halted stock token during off-hours even when the price timestamp is stale, and labels the environment as local-live.
 
@@ -100,7 +98,7 @@ Production requires 0G. The returned output must match the input commitment, pol
 1. Verifies session ownership and the requested basket.
 2. Rechecks live selected candidates.
 3. Verifies sufficient Investmade Wallet USDG in live modes.
-4. Requests fresh Uniswap approvals, Permit2 calls, and swaps.
+4. Requests fresh 0x quotes, requires one shared AllowanceHolder spender, and constructs one exact-total approval followed by all swaps.
 5. Validates quote policy and creates call commitments.
 6. Stores a prepared execution bound to the authorized plan hash.
 
@@ -119,7 +117,7 @@ The current atomic path should normally produce `SETTLED` or `FAILED`. `PARTIAL`
 
 Exits are intentionally separate from the cadence buy state:
 
-1. The server prepares a fresh reverse Uniswap quote for one supported position.
+1. The server prepares a fresh reverse 0x quote for one supported position.
 2. The browser submits returned wallet calls sequentially through the connected wallet.
 3. Each receipt must succeed before the next call is sent.
 
@@ -127,10 +125,10 @@ Exits are intentionally separate from the cadence buy state:
 
 ## Trust boundaries
 
-- Provider secrets, database credentials, and World signing material are server-only.
-- World is an optional human-verification gate, not authentication, KYC, or spending authority.
-- 0G receives bounded preferences/candidates, never keys, signatures, World proof payloads, or wallet secrets.
-- Uniswap responses are treated as untrusted route material until sender, chain, target, calldata, amounts, expiry, and price-impact policy are validated.
+- Provider secrets and database credentials are server-only.
+- 0G receives bounded preferences/candidates, never keys, signatures, or wallet secrets.
+- 0x responses are treated as untrusted route material until actor, chain, token pair, calldata, amounts, expiry, simulation, balance, and price-impact policy are validated.
+- The approval spender comes only from `issues.allowance.spender` or `allowanceTarget`; the Settler transaction target is never approved.
 - The server has no user signing key and cannot broadcast a buy without the wallet.
 - A quote, HTTP success, signing request, or transaction hash is not settlement.
 
@@ -141,7 +139,6 @@ Production PostgreSQL enforces:
 - a unique `(wallet, epoch_id)` cadence session;
 - one reserved execution per session;
 - prepared quote refresh only for the same authorized basket hash;
-- no return from submitted/terminal status to prepared;
-- World nullifier digest binding when World is enabled.
+- no return from submitted/terminal status to prepared.
 
 Demo and local-live use nonce-suffixed cadence epochs so developers can create repeatable baskets without changing production idempotency.

@@ -1,126 +1,322 @@
 # Design QA
 
-- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-be8b7b4d-c35d-44c8-815a-31f69c8bec29.png`
-- Implementation screenshot: `/private/tmp/investmade-icons-final-good.png`
-- Combined comparison: `/private/tmp/investmade-icons-comparison.png`
-- Viewport: 426 × 863 CSS px at DPR 2
-- Dimensions: source 262 × 1394 px; implementation 426 × 863 px
-- State: authenticated mobile Holdings / Positions view with live position rows
+- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-9f55e1d3-91e7-46ed-9d4e-a997ce528c93.png`
+- Implementation screenshot: `/private/tmp/investmade-dot-loading-final.png`
+- Focused chart crop: `/private/tmp/investmade-dot-loading-final-chart.png`
+- Viewport: 410 × 863 CSS px at 1×
+- Source pixels: 718 × 770
+- Implementation pixels: 410 × 863
+- Focused crop pixels: 370 × 320
+- Density normalization: both captures are 1×; the reference is a visual motif rather than the same product frame, so comparison is limited to the chart-loading texture and motion treatment.
+- State: connected mobile feed, STEEL card, `1H` timeframe loading
 
 ## Full-view comparison
 
-The source showed inconsistent marks: WETH and AAPL used large colored circles while AAOI and AMD floated without a shared badge. The revised implementation gives every asset a 48 × 48 circular neutral badge with the same border and a 76% contained image box.
+The loading treatment sits inside the existing chart footprint without moving the asset header, metadata, timeframe controls, coverage note, budget rail, or fixed actions. The former directional scanner is absent. The loading chart now uses a quiet 8 × 4 field of small neutral-grey dots and retains the subtle dashed horizontal guide visible in the reference.
 
-## Focused comparison
+## Focused region comparison
 
-Computed styles for WETH, AAOI, AAPL, and AMD are identical: 48 × 48 container, `#eef0f4` background, 1.5 px `#aeb5c0` border, and a 34.2 px image box.
+The source and implementation were viewed together, with the chart region checked separately because the requested change is intentionally limited to the loading texture:
 
-## Comparison history
-
-- Initial P2: mixed backgrounds, corner radii, and optical logo sizes.
-- Fix: consolidated presentation under `.asset-mark`, removed symbol-specific backgrounds, and unified the circular radius and image sizing.
-- Post-fix: no actionable P0, P1, or P2 icon inconsistencies.
+- Dot scale is small and understated rather than spinner-like.
+- Neutral grey replaces the previous semantic green/red scanner color.
+- Staggered negative delays make the pulse wave visible immediately instead of starting from a uniformly faint frame.
+- Opacity varies softly across the grid, matching the reference’s low-contrast chart background.
+- No scanner line, glow, sweep trail, or scanner keyframes remain.
 
 ## Required fidelity surfaces
 
-- Typography: unchanged.
-- Spacing and layout: unchanged; the fixed icon footprint is preserved.
-- Colors and tokens: one shared neutral background and border.
-- Image quality: original provider logos retained and contained without distortion.
-- Copy and content: unchanged.
+- Fonts and typography: unchanged; the loader introduces no text and does not disturb the existing hierarchy.
+- Spacing and layout rhythm: the dots occupy the existing chart loading region and preserve the surrounding card geometry.
+- Colors and visual tokens: dots use neutral grey `#aeb5c0` with low animated opacity; no asset-performance color leaks into the loading state.
+- Image quality and asset fidelity: no raster placeholder or generated asset is required for this native loading-state pattern; the supplied reference remains the visual source.
+- Copy and content: the accessible loading announcement remains present and visually hidden.
 
-## Findings
+## Interaction and accessibility checks
 
-No actionable P0, P1, or P2 findings remain in the requested icon treatment.
+- Selected `1H` and captured the live loading state before the chart resolved.
+- Confirmed 32 loading dots render during the request.
+- Confirmed staggered pulsing starts immediately.
+- Confirmed `prefers-reduced-motion` removes the pulse animation and leaves a static grey dot field.
+- Browser console warnings/errors: none.
+- Lint, typecheck, diff check, and all 54 tests passed.
+
+## Comparison history
+
+1. Earlier loading treatment used a directional scanner line and glow, which conflicted with the new reference.
+2. Replaced the scanner with a 32-dot grey grid and removed all scanner animation rules.
+3. The first dot pass used positive delays, making the first captured frame too uniformly faint.
+4. Switched to staggered negative delays; the final browser capture shows an immediate, varied pulse wave with no remaining P0, P1, or P2 mismatch.
 
 ## Follow-up polish
 
-Some source logos contain internal whitespace, so their glyphs vary slightly inside the common badge. This is acceptable P3 polish.
+- P3: dot spacing can be made denser later if the chart footprint grows on tablet layouts.
 
 final result: passed
 
 ---
 
-# Onboarding Question Header Follow-up
+# Settled Receipt — Option 3
 
-- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-05b497da-c73b-400e-abdc-a64e224395d1.png`
-- Implementation screenshot: `/private/tmp/investmade-onboarding-question-header.png`
-- Combined comparison: `/private/tmp/investmade-onboarding-question-comparison.png`
-- Viewport: 852 × 600 CSS px at DPR 1
-- Dimensions: source 852 × 184 px; implementation 852 × 600 px. The source crop contains the 138 px header plus blank page below it; comparison normalizes both to 852 px wide.
-- State: onboarding question 1 of 5, unauthenticated, light theme
-
-## Full-view comparison
-
-The onboarding-question state now uses a 138 px white header with the oversized investmade.fun wordmark, a 2 px black lower rule, and the outlined Connect wallet action at the right. It follows the source hierarchy and visual weight while preserving the existing question flow below the header.
-
-## Focused comparison
-
-The comparison uses the header region shown in the source and the corresponding region of the browser-rendered question state. The implementation retains the source's black typography, acid-green `fun` mark, white background, rounded wallet control, and dark outlined icon from the existing icon system. No separate focused crop is needed because all requested visual details are readable in the combined 852 px comparison.
-
-## Comparison history
-
-- Initial P2: question screens inherited the compact authenticated-app header, which did not match the supplied onboarding/start-screen header.
-- Fix: added `.topbar-onboarding` and applied it whenever navigation is disabled, including question states; adjusted the onboarding page height to account for the 138 px desktop header and preserved compact mobile behavior.
-- Post-fix evidence: `/private/tmp/investmade-onboarding-question-comparison.png` shows the large start-screen header in question 1 of 5.
-
-## Required fidelity surfaces
-
-- Typography: brand and CTA use the existing heavy display treatment, with enlarged desktop sizing and compact mobile fallback.
-- Spacing and layout: the desktop header is 138 px tall with a full-width lower rule, left-aligned mark, and right-aligned action; the question layout begins immediately beneath it.
-- Colors and tokens: white surface, black rule/text, acid-green brand highlight, and a neutral outlined CTA match the source.
-- Image quality and asset fidelity: no new image asset was introduced; the existing brand treatment and Lucide wallet icon remain sharp vector assets.
-- Copy and content: the CTA remains `Connect wallet`, matching the source; question content is unchanged.
+- Source visual truth: `/Users/khuanmatusso/.codex/generated_images/019fafe8-99f8-7182-9c50-2d1c2a40d4a6/call_HikosaJfg83xXWbQHuN6fTCL.png`
+- Browser implementation screenshot: `/private/tmp/investmade-receipt-variant3-final.png`
+- Active-confetti screenshot: `/private/tmp/investmade-receipt-confetti.png`
+- Side-by-side comparison: `/private/tmp/investmade-receipt-variant3-comparison-final.png`
+- Viewport: 390 × 844 CSS px at 1×
+- Source pixels: 853 × 1844, normalized to a 390 × 844 top-aligned comparison frame
+- Implementation pixels: 390 × 844
+- State: authenticated Robinhood Chain receipt with four successfully settled assets
 
 ## Findings
 
-No actionable P0, P1, or P2 differences remain for the requested start/question header. The implementation intentionally shows the real onboarding content beneath the header instead of the source's blank crop.
+- No actionable P0, P1, or P2 mismatch remains.
+- P3: the source includes decorative rays around the success check. The implementation keeps the product's existing icon language and uses the shared confetti component for celebration instead of introducing an approximate decorative asset.
+- P3: the implementation retains Investmade's persistent mobile navigation. This adds a bottom navigation row that is absent from the concept image, while keeping both receipt actions visible above it.
+
+## Full-view comparison
+
+The selected design and final browser capture were placed in one comparison image. Both use the same status-led hierarchy: compact success hero, verified-chain band, unified asset ledger, secondary execution proof, transaction link, primary portfolio action, and quiet next-basket action. The final mobile receipt fits all of these sections in the 390 × 844 viewport without horizontal or vertical page overflow.
+
+## Focused region comparison
+
+The full-view comparison keeps the typography, asset rows, proof rows, and actions readable at the normalized size, so a separate crop was not needed. The receipt hero, all four asset outputs, the transaction receipt, and both actions were inspected directly in the paired image.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Archivo Black preserves the selected design's bold outcome headline; DM Sans remains on financial amounts, support copy, rows, and controls. The compact mobile scale keeps the heading to two lines and preserves readable 11–16 px supporting text.
+- Spacing and layout rhythm: the final pass reduces only receipt-local mobile spacing. Four 60 px asset rows, 52 px proof rows, and compact section margins keep the full receipt decision flow visible above the persistent navigation.
+- Colors and visual tokens: the success check, verification band, primary action, green outputs, paper background, borders, and muted copy use the existing semantic Investmade tokens and match the acid-green reference direction.
+- Image quality and asset fidelity: existing provider-backed asset marks and Lucide interface icons stay sharp at 1×. No placeholder, emoji, custom SVG, or CSS-drawn replacement was introduced.
+- Copy and content: the receipt leads with `Done — your basket settled`, explains the total split, names the verified chain, shows allocation and received amounts, and moves technical proof behind `How this was executed`.
+
+## Interaction and accessibility checks
+
+- `How this was executed` resolves as one disclosure control and toggles the proof region.
+- `See my portfolio` navigates to Portfolio; Activity returns to the receipt.
+- Transaction explorer URL is chain-aware.
+- Settlement confetti renders as one canvas for a fresh settled execution, runs once per execution per browser session, and is suppressed for `prefers-reduced-motion`.
+- Mobile document width and scroll width are both 390 px.
+- The dev console contains pre-existing Privy/WalletConnect duplicate-initialization warnings from the connected browser session; no receipt-specific runtime error was observed.
+- Typecheck, lint, all 99 tests, and the production build pass.
+
+## Comparison history
+
+1. The first implementation matched the selected hierarchy but used desktop-derived mobile spacing, leaving execution details and actions below the initial viewport.
+2. Tightened receipt-only mobile heading, verification, ledger, proof-row, and action spacing while keeping financial text readable.
+3. The first confetti runtime check exposed React Strict Mode's effect replay consuming the session marker before the canvas remained mounted.
+4. Added an execution-scoped ref so the replay re-arms the same one-shot effect without allowing repeat celebrations later in the session.
+5. The final side-by-side capture shows the complete receipt and both actions in the intended viewport, with no remaining P0, P1, or P2 mismatch.
 
 ## Implementation Checklist
 
-- [x] Apply the start-screen header style to all navigation-disabled onboarding states.
-- [x] Preserve the original compact header on authenticated navigation states.
-- [x] Verify the question state in the in-app browser at the reference width.
-- [x] Run typecheck and lint.
-
-## Follow-up polish
-
-- [P3] If exact pixel matching is needed for a marketing capture, slightly reduce the desktop CTA horizontal padding; it is visually a little wider than the reference, but does not affect the requested state or usability.
+- [x] Friendly settled-state hierarchy
+- [x] Compact four-asset ledger
+- [x] Collapsible execution proof
+- [x] Chain-aware explorer receipt
+- [x] Portfolio-first primary action
+- [x] One-shot, reduced-motion-safe confetti
+- [x] Mobile fit and overflow validation
+- [x] Typecheck, lint, tests, and production build
 
 final result: passed
 
 ---
 
-# AMZN Square-to-Circle Follow-up
+# Top Up Row Alignment Follow-up
 
-- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-04fc24ce-e83f-42a0-9c84-f6d61c1f06da.png`
-- Implementation screenshot: `/private/tmp/investmade-amzn-icon-after.png`
-- Combined comparison: `/private/tmp/investmade-amzn-icon-comparison.png`
-- Browser viewport: 1280 × 720 CSS px
-- Focused dimensions: source 282 × 154 px; implementation 282 × 154 px
-- State: AMZN card-header fixture using the app's production `.asset-mark` CSS and AMZN provider image
+- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-42616178-4f4d-4d31-90a6-a42c8c6d6aa6.png`
+- Implementation screenshot: `/private/tmp/investmade-topup-same-row-final.png`
+- Focused comparison: `/private/tmp/investmade-topup-row-comparison.png`
+- Viewport: 390 × 844 CSS px at 1×
+- Source pixels: 401 × 223
+- Implementation pixels: 390 × 844
+- Focused implementation card: 360 × 204 px
+- Density normalization: the source was normalized to 360 × 200 and compared with the 360 × 204 implementation card crop.
+- State: authenticated Account page with 0 USDG balance
 
-## Focused comparison
+## Full-view comparison
 
-The source showed the 256 × 256 square AMZN image contained at a smaller size inside
-the circle. The revised implementation renders the image at the full inner dimensions
-of the 96 × 96 circular mark. `overflow: hidden` and `border-radius: 50%` clip the
-square image to the circular boundary without stretching it.
+The Account page preserves its existing hierarchy and mobile card geometry. The address controls and Top up action now share one horizontal row, with Top up aligned against the card’s right content edge.
+
+## Focused region comparison
+
+The before reference and post-fix card were placed in one comparison image. The address and copy control remain a single left-side group, while Top up moves from a second row to the far right of that same row.
+
+## Required fidelity surfaces
+
+- Fonts and typography: unchanged; the button and wallet address retain their existing type styles.
+- Spacing and layout rhythm: the action row spans the card width with `space-between`; both groups are vertically centered.
+- Colors and visual tokens: unchanged.
+- Image quality and asset fidelity: existing Lucide Copy and ArrowDownToLine icons are retained.
+- Copy and content: unchanged.
+
+## Interaction and accessibility checks
+
+- Top up remains uniquely accessible and enabled.
+- Clicking Top up opens the `Top up Investmade Wallet` dialog.
+- Closing the dialog returns to the Account card.
+- Mobile viewport has no horizontal overflow.
+- Browser console warnings/errors: none.
 
 ## Comparison history
 
-- Initial P2: visible empty space between square artwork and circular boundary.
-- Fix: changed `.asset-mark img` from a contained inset to `width: 100%`,
-  `height: 100%`, and `object-fit: cover`.
-- Post-fix: no actionable P0, P1, or P2 findings remain.
+1. Earlier state placed Top up below the wallet address.
+2. Replaced the address container grid with an inline flex row.
+3. Added mobile `space-between` alignment and full-width row sizing.
+4. Post-fix evidence shows no remaining P0, P1, or P2 mismatch for the requested alignment.
 
-## Validation
+## Follow-up polish
 
-- Computed mark: 96 × 96 px, 50% radius, hidden overflow.
-- Computed image: 93 × 93 px inside the 1.5 px border, `object-fit: cover`.
-- Image intrinsic dimensions: 256 × 256 px.
-- Browser comparison page: two expected images, no console warnings or errors.
-- App interaction smoke test: onboarding advanced through four questions normally.
-- Project checks: typecheck, lint, 45 tests, and production build passed.
+- None required.
+
+final result: passed
+
+---
+
+# Account Command Center Redesign
+
+- Source visual truth: `/Users/khuanmatusso/.codex/generated_images/019fa997-f7ab-76a0-87f6-08d48e4aae07/call_iYmxsy4IhUHx0ARiMppodhPW.png`
+- Implementation screenshot: `/private/tmp/investmade-account-option3-852.png`
+- Side-by-side comparison: `/private/tmp/investmade-account-option3-comparison.png`
+- State: authenticated Account page with connected smart and external wallets, Robinhood Chain, and live USDG balance
+
+## Full-view comparison
+
+The implementation preserves option 3's command-center hierarchy: status-led hero, acid investing-balance panel, distinct smart and external wallet roles, an immediately scannable rules summary, and a bordered new-basket action. Existing Investmade navigation and product typography remain intact.
+
+## Required fidelity surfaces
+
+- Typography: Archivo Black hero and action labels retain the product's existing bold visual voice.
+- Spacing and structure: the screen now uses section dividers and list rows instead of separate dashboard cards.
+- Colors: acid green, Robinhood blue, white, ink, and subtle grey rules match the selected direction.
+- Assets: existing Lucide icons replace the concept-only Robinhood feather while preserving semantic meaning and visual weight.
+- Copy: command-center, wallet-role, investment-rule, and basket-action copy matches the selected option.
+
+## Interaction and accessibility checks
+
+- Live USDG balance, wallet addresses, copy controls, and Top up remain connected to existing behavior.
+- `Edit` expands the existing investment settings form; `Close` collapses it.
+- Saving still uses the existing preference workflow and returns to the compact summary.
+- Build another basket remains connected to the existing developer reset action.
+- Regions and controls have unique accessible names.
+- Typecheck, lint, and all 75 tests passed.
+
+## Comparison history
+
+1. Replaced the three disconnected Account cards with option 3's command-center structure.
+2. Added wallet-role rows, row chevrons, status iconography, and blue rules icons to match the selected hierarchy.
+3. Converted the full-time settings form into a compact live summary with a functional editor.
+4. Verified the selected source and final implementation together in one comparison image.
+5. No remaining P0, P1, or P2 mismatch blocks the selected design.
+
+## Follow-up polish
+
+- P3: the generated source uses a concept-only Robinhood feather; the implementation intentionally uses the product's installed security icon rather than adding an unverified brand asset.
+
+final result: passed
+
+---
+
+# Wallet Address Row Follow-up
+
+- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-900b910d-8f4a-42db-b540-9e8d909169dd.png`
+- Implementation screenshot: `/private/tmp/investmade-account-mobile-after.png`
+- Focused comparison: `/private/tmp/investmade-wallet-card-comparison.png`
+- Viewport: 390 × 844 CSS px at 1×
+- Source pixels: 894 × 568
+- Implementation pixels: 390 × 844
+- Focused implementation card: 360 × 242 CSS px
+- Density normalization: the source was normalized to 447 × 284 and the focused implementation card to 447 × 300 for a side-by-side layout comparison.
+- State: authenticated Account page with a ready Investmade smart wallet and 0 USDG balance
+
+## Full-view comparison
+
+The updated balance card preserves the existing mobile hierarchy, padding, acid background, border, typography, description, and Top up action. The requested information label now reads `Investmade Wallet · Robinhood Chain`.
+
+## Focused region comparison
+
+The source and implementation were placed together in one comparison image. The implementation fixes the source mismatch by keeping the shortened wallet address and copy control on the same row. The Top up control remains on its own row below, matching the intended card structure.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Archivo Black and DM Sans hierarchy is preserved; the replacement label uses the same uppercase account-label styling.
+- Spacing and layout rhythm: address and copy icon align vertically with a 7 px gap; the Top up button remains 10 px below.
+- Colors and visual tokens: existing acid, blue, ink, white, and border tokens are unchanged.
+- Image quality and asset fidelity: no raster or generated asset was needed; the existing Lucide copy and confirmation icons remain sharp and consistent.
+- Copy and content: label changed to `Investmade Wallet · Robinhood Chain`; wallet balance and explanatory copy remain unchanged.
+
+## Interaction and accessibility checks
+
+- Copy control remains uniquely accessible as `Copy Investmade Wallet address`.
+- Clicking the copy control changes its accessible name to `Address copied`.
+- Mobile viewport has no horizontal overflow: document width and scroll width are both 390 px.
+- Browser console warnings/errors: none.
+
+## Comparison history
+
+1. Source state stacked the wallet address and copy icon on separate rows.
+2. Scoped the broad balance-card grid rule to the balance-content column.
+3. Added a dedicated inline address row while leaving Top up below it.
+4. Post-fix capture confirms no remaining P0, P1, or P2 mismatch for the requested change.
+
+## Follow-up polish
+
+- None required for this scoped change.
+
+final result: passed
+
+---
+
+# Settled Receipt Title Follow-up
+
+- Source visual truth: `/Users/khuanmatusso/.codex/generated_images/019fafe8-99f8-7182-9c50-2d1c2a40d4a6/call_HikosaJfg83xXWbQHuN6fTCL.png`
+- Browser implementation screenshot: `/private/tmp/investmade-basket-settled-title.png`
+- Side-by-side comparison: `/private/tmp/investmade-basket-settled-comparison.png`
+- Browser viewport: 451 × 863 CSS px at 1×
+- Source pixels: 853 × 1844, normalized into a 451 × 863 top-aligned comparison frame
+- Implementation pixels: 451 × 863
+- State: authenticated Robinhood Chain receipt with three successfully settled assets
+
+## Findings
+
+- No actionable P0, P1, or P2 mismatch remains.
+- P3: the user-directed `Basket settled` title is intentionally shorter than the selected concept's `Done — your basket settled`. The shorter copy improves scan speed and keeps the checkmark as the primary status signal.
+
+## Full-view comparison
+
+The source and updated browser capture were placed in one comparison image. The settled receipt keeps the selected checkmark-led hero, amount summary, verified-chain band, asset ledger, execution proof, transaction receipt, and primary actions. The shorter heading remains visually balanced with the checkmark and creates more breathing room without changing the rest of the receipt.
+
+## Focused region comparison
+
+The success hero is large and readable in the full comparison, so a separate crop was unnecessary. The checkmark, heading, amount summary, and verification band were inspected together because their relative alignment is the requested change.
+
+## Required fidelity surfaces
+
+- Fonts and typography: `Basket settled` retains Archivo Black, the existing optical weight, and a single-line hierarchy at the captured width. Supporting financial copy remains DM Sans.
+- Spacing and layout rhythm: the shorter heading preserves the existing checkmark grid and makes the hero more compact without shifting the ledger or actions.
+- Colors and visual tokens: acid success green, ink, muted copy, paper surface, and verification tint remain unchanged.
+- Image quality and asset fidelity: the existing sharp check and asset marks remain unchanged; no replacement or approximate asset was introduced.
+- Copy and content: the settled-state heading now reads `Basket settled`; the amount summary and verification wording remain explicit.
+
+## Interaction and accessibility checks
+
+- The live accessibility tree exposes one level-one heading named `Basket settled`.
+- The receipt remains authenticated and populated from the connected browser state.
+- Browser width and document scroll width both measure 451 px, so the title change introduces no horizontal overflow.
+- No interaction behavior changed in this copy-only refinement.
+
+## Comparison history
+
+1. The previous receipt used `Done — your basket settled`.
+2. Replaced it with the user-directed, status-first `Basket settled` while retaining the checkmark.
+3. The final browser comparison shows no remaining P0, P1, or P2 issue from the title change.
+
+## Implementation Checklist
+
+- [x] Checkmark retained
+- [x] Settled title simplified
+- [x] Amount summary retained
+- [x] Mobile overflow checked
+- [x] Source and implementation compared together
 
 final result: passed

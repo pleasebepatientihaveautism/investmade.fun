@@ -11,8 +11,8 @@
 > sponsor options, and rejected/future designs. It is not a line-by-line description of the current
 > app. Use [README.md](./README.md), [docs/USER_FLOW.md](./docs/USER_FLOW.md), and
 > [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for runtime truth. In particular, the current code
-> uses Privy rather than SIWE as its authentication boundary, makes World optional, has no AgentKit
-> or autonomous-mandate endpoint, has no separate stock-eligibility service, uses configurable
+> uses Privy rather than SIWE as its authentication boundary, has no autonomous-mandate endpoint,
+> has no separate stock-eligibility service, uses configurable
 > period/ticket amounts, executes live buys atomically through the Investmade smart wallet, and
 > executes position exits sequentially through the connected wallet.
 
@@ -30,36 +30,32 @@ The feed changes with market conditions:
 
 - In a crypto-bullish regime, the feed contains more executable crypto assets.
 - In a crypto-bearish regime, the feed contains more eligible tokenized stocks and stablecoin-preserving choices.
-- Existing portfolio positions, recent price movement, live liquidity, and verified-human crowd preferences influence card ranking.
+- Existing portfolio positions, recent price movement, live liquidity, and aggregate crowd preferences can influence card ranking.
 - The model explains why each card appears, but deterministic application rules—not the model—enforce budgets, asset eligibility, quote freshness, slippage, and execution limits.
 
 The implemented product is **user-confirmed**, not autonomous:
 
 1. The user answers five plan questions.
 2. Privy authenticates the user and activates the canonical Investmade smart wallet.
-3. World verifies the user only when the deployment has a complete World configuration.
-4. investmade.fun opens a daily, weekly, or monthly cadence session.
-5. 0G privately ranks a bounded executable candidate set in production.
-6. The user skips/adds cards and reviews the basket.
-7. Uniswap returns fresh approvals, Permit2 calls, and exact-input swap calldata.
-8. The Investmade smart wallet preflights and submits one atomic buy operation after one user confirmation.
-9. investmade.fun reconciles the exact USDG spend and output transfers before showing terminal settlement.
+3. investmade.fun opens a daily, weekly, or monthly cadence session.
+4. 0G privately ranks a bounded executable candidate set in production.
+5. The user skips/adds cards and reviews the basket.
+6. Uniswap returns fresh approvals, Permit2 calls, and exact-input swap calldata.
+7. The Investmade smart wallet preflights and submits one atomic buy operation after one user confirmation.
+8. investmade.fun reconciles the exact USDG spend and output transfers before showing terminal settlement.
 
-The World AgentKit and autonomous “degen agent” paths described later are preserved hackathon
-options, not implemented current flows. Degen mode currently affects ranking/community-asset
-discovery only; it never grants execution authority.
+Degen mode affects ranking and community-asset discovery only; it never grants execution authority.
 
-### Recommended three partner submissions
+### Recommended partner submissions
 
 | Priority | Partner track | Why it is load-bearing | First-place prize shown |
 |---:|---|---|---:|
 | 1 | [Uniswap Foundation — Best Uniswap API Integration](https://ethglobal.com/events/lisbon2026/prizes/uniswap-foundation) | Every accepted allocation is routed and settled through live Uniswap paths | $4,000 |
 | 2 | [0G — Best AI Product on 0G](https://ethglobal.com/events/lisbon2026/prizes/0g) | Every personalized weekly feed is generated through private, verifiable 0G inference | $3,000 |
-| 3 | [World — AgentKit New Use Cases](https://ethglobal.com/events/lisbon2026/prizes/world) | A registered human-backed agent authorizes a bounded plan linked to execution | $4,000 |
 
-The nominal first-place ceiling is **$11,000**, but prize stacking is not guaranteed and should be confirmed with sponsor mentors.
+The nominal first-place ceiling is **$7,000**, but prize stacking is not guaranteed and should be confirmed with sponsor mentors.
 
-[The Graph — Best AI Use Case](https://ethglobal.com/events/lisbon2026/prizes/the-graph) is the strongest fallback partner if the AgentKit flow cannot be made genuinely load-bearing. It should replace World in the three-partner submission set, not be added as a fourth partner.
+[The Graph — Best AI Use Case](https://ethglobal.com/events/lisbon2026/prizes/the-graph) is the strongest optional third partner when its live data path is genuinely load-bearing.
 
 ---
 
@@ -89,7 +85,6 @@ Do not describe it as a passive index or guaranteed DCA strategy.
 - A broker or order book.
 - A guarantee that every token in a registry has executable liquidity.
 - Fully autonomous in the core MVP.
-- A product that turns a World proof into spending authority.
 - A product in which 0G’s TEE proves that an investment recommendation is good.
 - A product that gives legal ownership of underlying public-company shares.
 
@@ -163,13 +158,10 @@ Standard-EOA sequential execution is deliberately not a live-buy fallback. Exter
 Rainbow can authenticate and fund the Investmade Wallet, but they do not execute independent basket
 legs.
 
-### 3.5 Privy is authentication; World is optional verification
+### 3.5 Privy is the authentication boundary
 
 The current code authenticates with a short-lived Privy access token and verifies that the canonical
-Investmade smart-wallet address belongs to that Privy user. When all World RP/app values are
-configured, a World proof is additionally bound to the authenticated wallet and becomes a feed
-gate. World is otherwise absent from the user flow. It never approves USDG, signs Uniswap
-transactions, or creates a trading mandate.
+Investmade smart-wallet address belongs to that Privy user.
 
 ---
 
@@ -180,8 +172,8 @@ transactions, or creates a trading mandate.
 3. **AI proposes, code constrains:** the model ranks only supplied candidates; it never invents token addresses or calldata.
 4. **Executable cards only:** every visible buy card has recently passed a live quote gate.
 5. **Private personalization:** private portfolio/preferences go through 0G Private/TeeML inference, not a conventional public model endpoint.
-6. **Proof over claims:** expose sanitized 0G, World, Uniswap, and chain receipts.
-7. **Human-backed community:** crowd data is limited to one contribution per verified human per asset/session.
+6. **Proof over claims:** expose sanitized 0G, Uniswap, and chain receipts.
+7. **Privacy-aware community data:** aggregate crowd data without exposing user identifiers.
 8. **Exit is always available:** session restrictions may block new buys, but never block a supported-position exit.
 9. **Fail closed:** stale, halted, unverified, over-budget, or unquotable plans cannot execute.
 10. **No fake sponsor paths:** sponsor-critical data and transactions must be live in the demo.
@@ -195,18 +187,17 @@ The implemented flow is:
 1. Answer cadence, period-limit, ticket-size, risk, and asset-mix questions.
 2. Accept the disclosure and connect with Privy.
 3. Create/activate the embedded signer and Investmade smart wallet on chain `4663`.
-4. Complete World verification only when the deployment enables the optional World gate.
-5. Open a cadence-bound session and request an executable feed page.
-6. Skip/add cards without moving funds; paginate while preserving selected assets.
-7. Review the basket and refresh every selected route.
-8. Preflight and sign one atomic smart-wallet buy operation.
-9. Reconcile the submitted receipt and exact output transfers.
-10. View Activity/Portfolio, or prepare fresh sequential wallet-confirmed exits.
+4. Open a cadence-bound session and request an executable feed page.
+5. Skip/add cards without moving funds; paginate while preserving selected assets.
+6. Review the basket and refresh every selected route.
+7. Preflight and sign one atomic smart-wallet buy operation.
+8. Reconcile the submitted receipt and exact output transfers.
+9. View Activity/Portfolio, or prepare fresh sequential wallet-confirmed exits.
 
 The authoritative screen-by-screen version is [docs/USER_FLOW.md](./docs/USER_FLOW.md).
 
 > The detailed subsections below preserve the original hackathon design. Fixed `100/10 USDG`,
-> mandatory World, CrowdScore, AgentKit, SIWE, and atomic Sell All statements are historical unless
+> fixed CrowdScore, SIWE, and atomic Sell All statements are historical unless
 > they also appear in the current user-flow document.
 
 ### 5.1 Historical onboarding design
@@ -219,10 +210,8 @@ The authoritative screen-by-screen version is [docs/USER_FLOW.md](./docs/USER_FL
    value, stock tokens depend on eligibility, and every trade requires wallet approval.
 6. User authenticates with Privy; Privy creates an embedded signer and the canonical Investmade smart wallet.
 7. Backend verifies the Privy access token and confirms the Investmade smart wallet belongs to that user.
-8. User completes World Proof of Human.
-9. Backend binds the verified World session to the authenticated investmade.fun account.
-10. App activates a Privy smart-wallet client for Robinhood Chain.
-11. App checks:
+8. App activates a Privy smart-wallet client for Robinhood Chain.
+9. App checks:
    - USDG balance;
    - smart-wallet activation and bundler/paymaster readiness;
    - existing Permit2 approval state.
@@ -230,8 +219,7 @@ The authoritative screen-by-screen version is [docs/USER_FLOW.md](./docs/USER_FL
 The first-time answers are a versioned, minimal client preference record and are submitted to the
 backend when generating a feed. Cadence determines the idempotent session epoch; ticket size
 determines exact quote and allocation amounts; allowed asset classes filter the deterministic
-candidate set before private inference. World verification should be a one-time onboarding action
-with optional continuity checks, not a replacement for Privy wallet authentication.
+candidate set before private inference.
 
 ### 5.2 Historical investment-plan design
 
@@ -288,7 +276,7 @@ Each card shows:
 - Current executable quote preview.
 - AI reason in one sentence.
 - Market-regime evidence.
-- Verified-human CrowdScore.
+- Aggregate CrowdScore.
 - Liquidity and price-impact warning.
 - Data timestamp.
 - “Why am I seeing this?” details.
@@ -312,7 +300,6 @@ The review screen displays:
 - Price impact, fees, gas, and quote expiry.
 - Unspent USDG.
 - 0G TEE verification state.
-- World human-backed state.
 - Warnings and deterministic policy result.
 
 Immediately before signing:
@@ -362,25 +349,6 @@ The core MVP always exposes **Exit position** for each supported holding. The wo
 
 Never label a partial exit “Sell All complete.”
 
-### 5.8 Historical World submission path: human-backed agent mode
-
-If World is one of the selected three partners, the AgentKit authorization path is core to the submission. Fully autonomous onchain spending remains optional and separated from the user-confirmed MVP.
-
-1. User registers an agent wallet in World AgentBook.
-2. User binds that agent to the authenticated investmade.fun account.
-3. User signs a separate bounded trading mandate.
-4. The agent calls an AgentKit-protected weekly plan endpoint.
-5. investmade.fun verifies:
-   - the agent is registered to a human;
-   - its mandate is active;
-   - the epoch has not already executed;
-   - the spend, assets, and slippage fit the mandate.
-6. Agent can generate or retrieve an idempotent basket plan.
-7. Safest MVP: user still signs the final wallet transaction.
-8. Stretch: a smart-account policy executes within the bounded mandate.
-
-Plan generation does not consume the weekly execution nonce. The nonce is reserved when a valid execution is submitted, released if it expires before broadcast, and permanently consumed only after the app accepts a broadcast/order submission. The demo should include an unregistered-agent rejection and a rejected second execution in the same week.
-
 ---
 
 ## 6. Historical proposed architecture
@@ -391,12 +359,11 @@ This section is the pre-build architecture proposal. The implemented architectur
 ```mermaid
 flowchart LR
     U["User wallet"] --> A["SIWE authentication"]
-    A --> W["World Proof of Human"]
-    W --> S["investmade.fun account and weekly session"]
+    A --> S["investmade.fun account and weekly session"]
 
     S --> R["Robinhood asset registry and market state"]
     S --> C["CoinMarketCap auxiliary crypto metrics"]
-    S --> G["Verified-human CrowdScore"]
+    S --> G["Aggregate CrowdScore"]
     R --> E["Normalized evidence packet"]
     C --> E
     G --> E
@@ -412,9 +379,6 @@ flowchart LR
     U --> RH["Robinhood Chain"]
     RH --> X["Settlement and proof receipt"]
     X --> S
-
-    WA["World AgentKit and AgentBook"] --> M["Bounded weekly mandate check"]
-    M --> S
 ```
 
 ### Components
@@ -426,8 +390,6 @@ flowchart LR
 | Backend API | Node.js + TypeScript | Keys, sessions, sponsor APIs, policy |
 | Database | PostgreSQL | Accounts, sessions, swipes, idempotency, receipts |
 | Private AI | 0G Compute Router | Structured personalized feed generation |
-| Human verification | World IDKit | Proof of Human and returning continuity |
-| Human-backed agent | World AgentKit | Registered-agent access to weekly plan endpoint |
 | Market/execution | Uniswap Trading API | Approvals, quotes, calldata/orders, status |
 | Execution chain | Robinhood Chain | USDG, crypto and stock-token settlement |
 | Market metadata | Robinhood REST + RPC | Canonical assets, prices, halt/oracle state |
@@ -547,7 +509,6 @@ Robinhood documentation describes geographic restrictions, including restriction
 - Use synthetic test users.
 - Show an explicit eligibility gate.
 - Avoid claiming legal availability to all users.
-- Avoid presenting World Proof of Human as KYC or jurisdiction compliance.
 - Keep tokenized-stock mode disabled when eligibility is unknown.
 
 Source: [Robinhood Chain Terms of Service](https://docs.robinhood.com/chain/terms-of-service/).
@@ -563,7 +524,7 @@ Source: [Robinhood Chain Terms of Service](https://docs.robinhood.com/chain/term
 | Robinhood APIs/RPC | Stock identity, underlying price, multiplier, halt, oracle state | Executable DEX quote |
 | Uniswap | Executable route, output, price impact, routing, status | Long-horizon sentiment |
 | CoinMarketCap | Crypto rank, price, market cap, 24h volume, momentum | Genuine social sentiment |
-| investmade.fun CrowdScore | Verified-human swipes | Market price or liquidity |
+| investmade.fun CrowdScore | Aggregate account-scoped swipes | Market price or liquidity |
 | The Graph, optional | Onchain swaps, liquidity events, token flows, balances | X/Reddit/CMC data |
 | 0G | Personalized ranking and explanation over supplied data | Asset registry or authority to trade |
 
@@ -588,7 +549,7 @@ portfolioDrift =
   current asset-class weight - user target/risk preference
 
 crowdPreference =
-  verified right swipes / verified total swipes
+  eligible right swipes / eligible total swipes
 ```
 
 The AI can classify a regime such as:
@@ -604,14 +565,13 @@ The classification is a feed-composition input, not a guaranteed prediction.
 
 To produce a genuine network effect:
 
-- Count at most one vote per verified human per asset per weekly epoch.
-- For direct user votes, use a fixed World action and deduplicate with `HMAC(serverSecret, IDKit nullifier)` per asset/epoch.
-- For agent-originated votes, derive the pseudonym from AgentBook `humanId`.
-- Store only the pseudonymous internal identifier, not the raw World identifier.
+- Count at most one vote per authenticated account per asset per weekly epoch.
+- Derive an internal pseudonym from the authenticated account ID with a server-side secret.
+- Store only the pseudonymous internal identifier.
 - Publish only aggregates after a minimum cohort threshold.
 - Do not show exact counts for tiny cohorts.
 - Separate right-swipe rate from execution rate.
-- Exclude bots, duplicate sessions, and rejected proofs.
+- Exclude bots and duplicate sessions.
 - Mark the score as “investmade.fun community preference,” not market-wide sentiment.
 
 Example:
@@ -827,7 +787,7 @@ Sources: [Chat Completions](https://docs.0g.ai/developer-hub/building-on-0g/comp
 }
 ```
 
-Do not send World nullifiers, World session IDs, AgentBook human IDs, API keys, wallet private keys, or arbitrary unfiltered social content.
+Do not send API keys, wallet private keys, or arbitrary unfiltered social content.
 
 ### 10.6 AI output contract
 
@@ -947,7 +907,6 @@ Keep private:
 
 - Personalized prompt/input and raw completion.
 - Portfolio/account identifiers not needed by the public proof.
-- World identifiers and proof payloads.
 - 0G `ZG-Res-Key`/chat ID.
 - Permit2 signatures and all API/private keys.
 
@@ -1168,155 +1127,11 @@ An HTTP 200, quote ID, order acknowledgement, or transaction hash is not enough.
 
 ---
 
-## 12. World integration
-
-### 12.1 Proof of Human onboarding
-
-Recommended standalone-web flow:
-
-1. SIWE authenticates the wallet.
-2. Frontend uses `@worldcoin/idkit` 4.x.
-3. Backend generates the relying-party signature.
-4. Bind the proof to the authenticated account using `signal`.
-5. Backend forwards the result to:
-
-```text
-POST https://developer.world.org/api/v4/verify/{rp_id}
-```
-
-6. Store only the minimum opaque continuity/reference data.
-
-Sources:
-
-- [IDKit integration](https://docs.world.org/world-id/idkit/integrate)
-- [World verification endpoint](https://docs.world.org/api-reference/developer-portal/verify)
-
-World session IDs, uniqueness nullifiers, AgentBook `humanId`, and wallet addresses are different identifiers. Bind them through the investmade.fun account; do not assume they are equal.
-
-### 12.2 Why generic login is insufficient
-
-The World AgentKit prize requires a meaningful, working AgentKit integration that verifies a human-backed agent. A “Log in with World ID” button alone does not qualify.
-
-The sponsor story must affect real plan authorization:
-
-> “Only a registered World human-backed agent with a valid bounded weekly mandate may call the weekly plan endpoint; the authorized plan hash is linked to the later user-signed execution receipt.”
-
-### 12.3 AgentBook registration
-
-Documented CLI flow:
-
-```bash
-npx @worldcoin/agentkit-cli register <agent-address>
-npx @worldcoin/agentkit-cli status <agent-address>
-```
-
-Canonical AgentBook on World Chain mainnet:
-
-```text
-0xA23aB2712eA7BBa896930544C7d6636a96b944dA
-```
-
-Backend lookup:
-
-```ts
-const verifier = createAgentBookVerifier();
-const humanId = await verifier.lookupHuman(agentAddress);
-
-if (!humanId) {
-  throw new Error("AGENT_NOT_HUMAN_BACKED");
-}
-```
-
-Sources:
-
-- [AgentKit integration](https://docs.world.org/agents/agent-kit/integrate)
-- [AgentKit SDK reference](https://docs.world.org/agents/agent-kit/sdk-reference)
-
-### 12.4 AgentKit-protected endpoint
-
-Use a trade-plan authorization endpoint:
-
-```text
-POST /api/agent/weekly-plan
-```
-
-Expected flow:
-
-1. Unauthenticated agent request receives the AgentKit/x402 challenge.
-2. Registered agent signs the request.
-3. investmade.fun verifies the AgentKit message/signature.
-4. investmade.fun resolves the agent to a non-null human-backed identity.
-5. investmade.fun checks the bound mandate and plan-generation rate limit.
-6. investmade.fun generates or returns an idempotent weekly trade plan and `authorizedPlanHash`.
-7. The user-signed execution must match that hash.
-8. A second execution submission for the same human/epoch is rejected.
-
-Persist plan IDs, execution nonces, and the plan-to-receipt link. In-memory storage is acceptable only for a clearly labeled demo.
-
-AgentKit’s documented identity/payment golden path uses supported networks such as World Chain/Base. Kill-test whether the full AgentKit x402 request works with a Robinhood execution context. The safest design is to verify the agent through the documented identity path and execute the swap separately on Robinhood Chain.
-
-### 12.5 Bounded trading mandate
-
-Autonomous execution requires an additional signed/onchain mandate:
-
-```json
-{
-  "owner": "0xUSER",
-  "agent": "0xAGENT",
-  "tradeChainId": 4663,
-  "inputToken": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
-  "maxSpendPerEpoch": "100000000",
-  "epochDuration": 604800,
-  "allowedTokensHash": "0x...",
-  "maxSlippageBps": 50,
-  "maxPositions": 10,
-  "startTime": 1784970000,
-  "expiry": 1785574800,
-  "executorContract": "0x...",
-  "nonce": 1
-}
-```
-
-The wallet/smart account must enforce:
-
-- Input token.
-- Weekly spend.
-- Asset allowlist.
-- Slippage.
-- Time window.
-- Nonce/replay protection.
-- Revocation.
-
-World verifies the agent-human link; this mandate authorizes bounded financial action.
-
-### 12.6 CrowdScore privacy
-
-To aggregate unique-human swipes:
-
-- Use a fixed IDKit action and derive direct-user pseudonyms as `HMAC(serverSecret, IDKit nullifier)`.
-- Use AgentBook `humanId` only for agent-originated votes.
-- Never expose raw AgentBook human IDs or World nullifiers.
-- Enforce one contribution per asset/epoch.
-- Show cohort aggregates only.
-- Do not send identity identifiers to 0G.
-
-Never deduplicate by wallet or World session ID, and never assume an IDKit nullifier equals an AgentBook `humanId`.
-
-### 12.7 Optional Identity Check
-
-World Identity Check could be used as a meaningful `18+` gate for tokenized-stock or autonomous mode. Store only the necessary boolean result.
-
-It is not a substitute for KYC, sanctions screening, or jurisdiction eligibility. The track also expects beta feedback and should be attempted only if the core AgentKit path is stable.
-
-Source: [Identity Check Preview](https://docs.world.org/world-id/idkit/credentials#identity-check-preview).
-
----
-
 ## 13. Optional The Graph integration
 
 ### 13.1 When to use it
 
-Use The Graph only if it replaces World in the maximum-three-partner plan or if it is implemented without risking the core demo.
+Use The Graph only if it is implemented without risking the core demo.
 
 Target:
 
@@ -1516,12 +1331,7 @@ Sources:
 {
   "sessionId": "opaque-session-id",
   "epochId": "2026-W31",
-  "world": {
-    "proofOfHumanVerified": true,
-    "agentAddress": "0x...",
-    "agentHumanBacked": true,
-    "authorizedPlanHash": "sha256:..."
-  },
+  "authorizedPlanHash": "sha256:...",
   "zeroG": {
     "model": "0gm-1.0-35b-a3b",
     "provider": "0x...",
@@ -1543,7 +1353,7 @@ Sources:
 }
 ```
 
-Do not include raw World identifiers or the 0G chat ID in a public receipt.
+Do not include the 0G chat ID in a public receipt.
 
 ---
 
@@ -1558,14 +1368,12 @@ Do not include raw World identifiers or the 0G chat ID in a public receipt.
 | 0G output → policy | Hallucinated assets or amounts | Candidate IDs only, strict schema, deterministic caps |
 | Backend → Uniswap | Stale or manipulated quote | Fresh quote, request IDs, allowlist, slippage cap |
 | Wallet → chain | Wrong chain/transaction | Chain ID check, display summary, calldata untouched |
-| World → app account | Identifier mismatch/replay | Signal binding, nonce/nullifier/session rules |
-| Agent → weekly plan endpoint | Unauthorized plan/replay | Human-backed lookup, signed mandate, plan ID, execution nonce |
-| Crowd aggregation | Sybil/privacy attack | One verified human, HMAC pseudonym, cohort threshold |
+| Crowd aggregation | Sybil/privacy attack | Account-scoped pseudonym, epoch limit, cohort threshold |
 
 ### 15.2 Required security rules
 
-- Never ship 0G, Uniswap, Robinhood partner, or World backend keys to the browser.
-- Never log wallet signatures, World proof payloads, 0G prompts/completions, or Permit2 signatures.
+- Never ship 0G, Uniswap, or Robinhood partner keys to the browser.
+- Never log wallet signatures, 0G prompts/completions, or Permit2 signatures.
 - Validate addresses against the canonical candidate map.
 - Use checksummed or normalized addresses consistently.
 - Store numeric token amounts as decimal strings or database numeric types.
@@ -1598,7 +1406,7 @@ Do not include raw World identifiers or the 0G chat ID in a public receipt.
 | Swipe-card UI | Standard React gesture/state work |
 | Weekly countdown | Simple epoch calculation |
 | Budget/slot validation | Deterministic integer arithmetic |
-| Verified CrowdScore aggregate | Small relational model |
+| CrowdScore aggregate | Small relational model |
 | Robinhood asset metadata | Documented REST API |
 | One USDG → asset quote | Straight Trading API flow after key setup |
 | Basic 0G JSON request | Standard server-side HTTP call after funding |
@@ -1610,9 +1418,8 @@ Do not include raw World identifiers or the 0G chat ID in a public receipt.
 |---|---|
 | 10 USDG stock-token execution | Token existence does not guarantee AMM liquidity |
 | One-confirmation basket | Smart-wallet activation, multiple quotes, ordered approvals, and full-operation preflight |
-| World AgentKit prize fit | Must affect real human-backed agent authorization |
 | Autonomous trading | Needs a separate enforceable mandate/smart account |
-| Stock eligibility | Legal/jurisdiction rules exceed a simple World proof |
+| Stock eligibility | Legal and jurisdiction rules require dedicated checks |
 | Sell All | Multiple routes, dust, stale quotes, and partial outcomes |
 | 0G private mainnet setup | Funding, key scope, live TeeML provider, proof capture |
 | Reliable social data | X/Reddit access and quality are non-trivial |
@@ -1627,9 +1434,8 @@ Do not include raw World identifiers or the 0G chat ID in a public receipt.
 - Showing cards that were never live-quoted.
 - Reusing a Permit2 signature after refreshing a quote.
 - Claiming one atomic transaction when the wallet submitted several calls.
-- Treating World ID as login or token approval.
 - Claiming TEE proof validates investment quality.
-- Publishing a raw World identifier or 0G chat ID.
+- Publishing a raw 0G chat ID.
 - Counting ERC-20 transfers as DEX volume.
 - Using fixture data for a sponsor-critical “live” integration.
 
@@ -1643,8 +1449,7 @@ Critical pre-build gates:
 
 1. Funding plus live Uniswap crypto and stock-token quotes.
 2. One private 0G inference.
-3. World ID and AgentKit registration/challenge if World is selected.
-4. Robinhood asset/oracle state.
+3. Robinhood asset/oracle state.
 
 Independent 0G verification, full Sell All, and The Graph are later conditional tests. Atomic
 smart-wallet batching is a required core gate.
@@ -1657,8 +1462,6 @@ smart-wallet batching is a required core gate.
 | 30 min | Robinhood state | Registry, price, halt, multiplier, oracle are readable | Cut stock cards |
 | 60 min | 0G private inference | Private TeeML response with `tee_verified: true` | Try live fallback model, never downgrade trust |
 | 30 min | 0G independent proof | `processResponse(...) === true` | Keep Router proof and label limitation |
-| 60 min | World ID | SIWE-bound Proof of Human verifies | Cut CrowdScore uniqueness claim |
-| 90 min | AgentKit | Register, lookup, challenge, signed retry, reject unregistered agent | Replace World partner with Graph |
 | 45 min | Atomic smart-wallet batching | Privy prepares and sends the full chain-4663 call set once | Block live buy execution |
 | 60 min | End-to-end trade | Funded 1–10 USDG route settles and reconciles | Reduce demo scope to one asset |
 | 45 min | Exit position | One live position exits to USDG | Fix before calling the core MVP complete |
@@ -1687,21 +1490,19 @@ The full stocks-plus-crypto investmade.fun concept requires at least one executa
 Cut in this order if time is short:
 
 1. Autonomous execution.
-2. World Identity Check beta.
-3. External social sources; retain CrowdScore and market metrics.
-4. The Graph integration if it is not one of the selected three partners.
-5. Independent 0G proof; retain truthful Router TEE verification.
-6. Asset breadth; keep fewer live legs, but retain atomic execution.
-7. Sell All batching; keep one-position exit.
-8. Asset breadth; keep WETH plus one executable stock token.
-9. Ten displayed cards; demonstrate only the unique candidates that pass, with two or three live legs.
+2. External social sources; retain CrowdScore and market metrics.
+3. The Graph integration if it is not one of the selected partner tracks.
+4. Independent 0G proof; retain truthful Router TEE verification.
+5. Asset breadth; keep fewer live legs, but retain atomic execution.
+6. Sell All batching; keep one-position exit.
+7. Asset breadth; keep WETH plus one executable stock token.
+8. Ten displayed cards; demonstrate only the unique candidates that pass, with two or three live legs.
 
 Never cut:
 
 - Live 0G private inference.
 - Live Uniswap quote and settlement.
 - Deterministic budget/allowlist policy.
-- World AgentKit authorization if submitting to World.
 - Truthful execution/proof receipts.
 
 ---
@@ -1762,30 +1563,7 @@ The [0G prize page](https://ethglobal.com/events/lisbon2026/prizes/0g) asks for:
 
 0G Storage, 0G Chain, and Agentic ID are optional for this product track. Do not add them before private inference and Uniswap execution work end-to-end.
 
-### 19.3 World
-
-Target: **AgentKit New Use Cases**
-
-Make it judge-visible:
-
-- Actual agent wallet registered in AgentBook.
-- `lookupHuman(agentAddress)` returns a human-backed result.
-- Endpoint produces an AgentKit/x402 challenge.
-- Registered agent signs and retries.
-- Unregistered bot is denied.
-- Bounded weekly mandate is checked.
-- Second same-week execution is rejected.
-- Real plan influences real Uniswap execution.
-
-The [World prize page](https://ethglobal.com/events/lisbon2026/prizes/world) explicitly expects meaningful AgentKit use and an end-to-end human-backed agent flow. Generic login, reputation, simple content, or API discounts are not sufficient.
-
-Ask a World mentor early:
-
-- Whether the documented CLI registration is expected for consumer demos.
-- Which network should carry the AgentKit request.
-- Whether AgentKit plus Identity Check can qualify for multiple World categories.
-
-### 19.4 The Graph fallback
+### 19.3 The Graph fallback
 
 Target: **Best AI Use Case**
 
@@ -1800,7 +1578,7 @@ Make it judge-visible:
 
 The Graph prize page displayed prize-card values that did not perfectly align with all page totals at research time. Confirm the exact pool with a sponsor mentor before calculating the prize ceiling.
 
-### 19.5 ETHGlobal compliance
+### 19.4 ETHGlobal compliance
 
 The [ETHGlobal rules](https://ethglobal.com/rules) require from-scratch/Classic work to begin at kickoff, use version control, and disclose pre-existing work. AI should assist meaningful human work, not replace it.
 
@@ -1820,7 +1598,7 @@ Keep:
 
 Builder A:
 
-- Obtain Uniswap, 0G, World credentials.
+- Obtain Uniswap and 0G credentials.
 - Fund a small Robinhood Chain wallet with ETH and USDG.
 - Run exact WETH and stock-token quote/permission tests.
 - Submit one small live trade if possible.
@@ -1828,11 +1606,8 @@ Builder A:
 Builder B:
 
 - Run one private 0G request and capture Router proof.
-- Verify SIWE-bound World ID.
-- Register/lookup one AgentKit agent.
-- Demonstrate the x402 challenge and signed retry.
 
-Both verify Robinhood asset/oracle state. Do not build polished UI until the chosen partner trio’s critical gates pass.
+Both verify Robinhood asset/oracle state. Do not build polished UI until the chosen partner integrations’ critical gates pass.
 
 ### Hour 4–8: parallel foundations
 
@@ -1840,7 +1615,6 @@ Builder A:
 
 - Next.js shell.
 - Wallet connection and SIWE.
-- World IDKit verification.
 - Session configuration and countdown.
 - Swipe-card interactions.
 
@@ -1866,17 +1640,6 @@ Together:
 - User-signed settlement.
 - Unified receipt.
 
-### Hour 13–16: World track
-
-- AgentBook registration.
-- AgentKit-protected weekly plan endpoint.
-- Human-backed lookup.
-- Persistent weekly counter.
-- User-confirmed plan execution.
-- Rejected unregistered and second-weekly request.
-
-If this cannot work by hour 16, replace the World submission with The Graph only if a live Graph path already passes.
-
 ### Hour 16–18: product hardening
 
 - Sell one position to USDG.
@@ -1893,7 +1656,6 @@ If this cannot work by hour 16, replace the World submission with The Graph only
 - `FEEDBACK.md`.
 - Architecture diagram.
 - Sanitized 0G trace.
-- World AgentKit evidence.
 - Uniswap request/transaction evidence.
 - Public deployment.
 - Under-three-minute primary demo video.
@@ -1903,23 +1665,15 @@ If this cannot work by hour 16, replace the World submission with The Graph only
 
 ## 21. Demo script
 
-Target duration: 2 minutes 55 seconds for the World-selected submission cut.
+Target duration: 2 minutes 55 seconds.
 
 ### 0:00–0:15 — Problem and setup
 
 > “DCA is disciplined but boring, and choosing between crypto and tokenized stocks is noisy. investmade.fun turns a fixed weekly budget into a private, ten-swipe ritual.”
 
-Connect wallet, show Robinhood Chain, authenticate, and display verified-human status.
+Connect wallet, show Robinhood Chain, and authenticate.
 
-### 0:15–0:40 — AgentKit authorization and configuration
-
-Show the actual AgentKit exchange:
-
-1. Unregistered agent calls `/api/agent/weekly-plan` and is rejected.
-2. Registered agent receives the x402 challenge.
-3. Agent signs and retries.
-4. `lookupHuman(agentAddress)` succeeds.
-5. investmade.fun returns an `authorizedPlanHash`.
+### 0:15–0:40 — Plan configuration
 
 Set:
 
@@ -1947,7 +1701,7 @@ Swipe right on two or three available assets and left on another. If fewer than 
 Show:
 
 - AI reason.
-- CrowdScore from World-verified humans.
+- Aggregate CrowdScore.
 - A bullish/defensive card mix.
 - Remaining USDG.
 
@@ -1958,7 +1712,6 @@ Open review:
 - Total spend.
 - Fresh Uniswap routes.
 - Minimum outputs and price impact.
-- World human-backed status.
 - Deterministic policy pass.
 
 Confirm in the wallet and show settlement on Robinhood Chain.
@@ -1972,7 +1725,6 @@ funding, or quote error; do not fall back to sequential transactions.
 Show:
 
 - 0G proof.
-- World proof/agent state.
 - Uniswap request IDs.
 - Transaction hash and settled amounts.
 - Policy hash.
@@ -1982,7 +1734,7 @@ Attempt a second execution in the same week and show it rejected.
 
 ### 2:45–2:55 — Close
 
-> “The AI proposes privately, a verified human controls the budget, Uniswap executes, and every step leaves a receipt.”
+> “The AI proposes privately, the user controls the budget, Uniswap executes, and every step leaves a receipt.”
 
 ---
 
@@ -1991,7 +1743,6 @@ Attempt a second execution in the same week and show it rejected.
 The MVP is complete when:
 
 - [ ] Wallet authenticates with SIWE.
-- [ ] World Proof of Human is bound to the account.
 - [ ] One weekly session is created idempotently.
 - [ ] 100 USDG / 10 USDG slot arithmetic uses exact base units.
 - [ ] Candidate assets come from canonical addresses.
@@ -2004,7 +1755,6 @@ The MVP is complete when:
 - [ ] Receipt shows actual settled amounts.
 - [ ] Second same-epoch execution is rejected.
 - [ ] Sell-one-position exit works.
-- [ ] AgentKit shows challenge, human-backed signed retry, unregistered rejection, and plan-to-receipt hash if submitting to World.
 - [ ] Public repo, deployment, README, feedback, and video are ready.
 
 Stretch:
@@ -2014,7 +1764,6 @@ Stretch:
 - [ ] Sell All batching.
 - [ ] Bounded autonomous smart-account mandate.
 - [ ] Live The Graph signal.
-- [ ] World Identity Check beta.
 
 ---
 
@@ -2034,13 +1783,6 @@ Stretch:
 2. Which private model is most stable during judging?
 3. Is independent `processResponse` expected for the product track?
 4. What sanitized proof fields should be shown publicly?
-
-### World
-
-1. Is CLI AgentBook registration acceptable for the consumer-agent demo?
-2. Which x402 network should be used when execution occurs on Robinhood Chain?
-3. Can AgentKit and Identity Check win separate World categories?
-4. What persistent counter store is recommended for a hackathon deployment?
 
 ### Robinhood Chain
 
@@ -2096,16 +1838,6 @@ Stretch:
 - [Errors](https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/errors)
 - [0G Compute TypeScript SDK](https://github.com/0gfoundation/0g-compute-ts-sdk)
 
-### World
-
-- [Lisbon prize page](https://ethglobal.com/events/lisbon2026/prizes/world)
-- [AgentKit integration](https://docs.world.org/agents/agent-kit/integrate)
-- [AgentKit SDK reference](https://docs.world.org/agents/agent-kit/sdk-reference)
-- [IDKit integration](https://docs.world.org/world-id/idkit/integrate)
-- [World verification endpoint](https://docs.world.org/api-reference/developer-portal/verify)
-- [Identity Check Preview](https://docs.world.org/world-id/idkit/credentials#identity-check-preview)
-- [World ID 4.0 migration](https://docs.world.org/world-id/4-0-migration)
-
 ### Robinhood Chain
 
 - [Chain overview](https://docs.robinhood.com/chain/)
@@ -2144,10 +1876,9 @@ Build investmade.fun as a narrow, truthful vertical slice:
 2. **Up to ten 10 USDG card slots in the product model.**
 3. **WETH plus one or two stock tokens that pass live kill tests.**
 4. **Private 0G feed generation with TEE verification.**
-5. **World-verified human and a genuinely AgentKit-protected weekly plan linked to execution.**
-6. **User-confirmed Uniswap execution on Robinhood Chain.**
-7. **A unified receipt proving authorization, decision, execution, and settlement.**
+5. **User-confirmed Uniswap execution on Robinhood Chain.**
+6. **A unified receipt proving authorization, decision, execution, and settlement.**
 
 The strongest product sentence is:
 
-> **“investmade.fun is the private, human-backed weekly market swipe: 0G builds the feed, World proves the human or human-backed agent, and Uniswap executes only the basket the user has bounded and approved.”**
+> **“investmade.fun is the private weekly market swipe: 0G builds the feed, and Uniswap executes only the basket the user has bounded and approved.”**

@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import type { ConnectedWallet } from "@privy-io/react-auth";
-import { WalletCards } from "lucide-react";
+import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
+import { Wallet } from "lucide-react";
 import { WalletMenu } from "./WalletMenu";
 
 interface Props {
@@ -12,6 +13,13 @@ interface Props {
 	onWallet?: () => void;
 	walletReady?: boolean;
 	navigationEnabled?: boolean;
+	activeChain: "ROBINHOOD" | "SOLANA";
+	onChainChange: (chain: "ROBINHOOD" | "SOLANA") => void;
+	solanaWallets: ConnectedStandardSolanaWallet[];
+	solanaWalletsReady: boolean;
+	solanaAvailable: boolean;
+	selectedSolanaWallet?: ConnectedStandardSolanaWallet;
+	onSolanaWalletChange: (wallet: ConnectedStandardSolanaWallet) => void;
 	children: ReactNode;
 }
 
@@ -24,8 +32,36 @@ export function AppShell({
 	onWallet,
 	walletReady = true,
 	navigationEnabled = true,
+	activeChain,
+	onChainChange,
+	solanaWallets,
+	solanaWalletsReady,
+	solanaAvailable,
+	selectedSolanaWallet,
+	onSolanaWalletChange,
 	children,
 }: Props) {
+	useEffect(() => {
+		const root = document.documentElement;
+		const themeColor = document.querySelector<HTMLMetaElement>(
+			'meta[name="theme-color"]',
+		);
+		const previousChain = root.dataset.chain;
+		const previousThemeColor = themeColor?.content;
+		const chain = activeChain.toLowerCase();
+
+		root.dataset.chain = chain;
+		if (themeColor) {
+			themeColor.content = activeChain === "SOLANA" ? "#090B0F" : "#f1f3f6";
+		}
+
+		return () => {
+			if (previousChain) root.dataset.chain = previousChain;
+			else delete root.dataset.chain;
+			if (themeColor && previousThemeColor) themeColor.content = previousThemeColor;
+		};
+	}, [activeChain]);
+
 	return (
 		<div className="app-shell">
 			<header className={navigationEnabled ? "topbar" : "topbar topbar-onboarding"}>
@@ -62,6 +98,13 @@ export function AppShell({
 							wallet={wallet}
 							fundingWallet={fundingWallet}
 							topUpRequest={topUpRequest}
+							activeChain={activeChain}
+							onChainChange={onChainChange}
+							solanaWallets={solanaWallets}
+							solanaWalletsReady={solanaWalletsReady}
+							solanaAvailable={solanaAvailable}
+							selectedSolanaWallet={selectedSolanaWallet}
+							onSolanaWalletChange={onSolanaWalletChange}
 						/>
 					</div>
 				) : (
@@ -73,7 +116,7 @@ export function AppShell({
 						aria-label="Connect wallet with Privy"
 						title="Connect wallet with Privy"
 					>
-						<WalletCards size={17} strokeWidth={1.7} />
+						<Wallet size={17} strokeWidth={1.7} />
 						Connect wallet
 					</button>
 				)}

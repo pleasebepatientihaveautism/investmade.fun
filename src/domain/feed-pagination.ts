@@ -1,12 +1,14 @@
 export function nextFeedExcludedAssetIds(
-  feed: { candidates: Array<{ assetId: string }>; hasMore: boolean },
-  selectedAssetIds: string[]
+  feed: { candidates: Array<{ assetId: string }> },
 ) {
-  // ponytail: exhaust unique cards first, then recycle only skipped cards.
-  return feed.hasMore ? feed.candidates.map(({ assetId }) => assetId) : selectedAssetIds;
+  return feed.candidates.map(({ assetId }) => assetId);
 }
 
 export function fillFeedPage<T>(items: T[], size = 10): T[] {
-  if (!items.length) return [];
-  return Array.from({ length: size }, (_, index) => items[index % items.length] as T);
+  return items.slice(0, size);
+}
+
+export function shouldPrefetchNextFeed(index: number, loadedCount: number) {
+  // ponytail: keep one fixed 10-card page warm; generalize if page size becomes configurable.
+  return loadedCount > 0 && index >= loadedCount - 10;
 }

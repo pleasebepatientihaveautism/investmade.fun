@@ -55,13 +55,14 @@ function AssetLogo({ iconUrl, domain, symbol }: { iconUrl?: string; domain?: str
   );
 }
 
-export function AssetMark({ symbol, size = "md" }: { symbol: string; size?: "sm" | "md" | "lg" }) {
+export function AssetMark({ symbol, iconUrl, size = "md" }: { symbol: string; iconUrl?: string; size?: "sm" | "md" | "lg" }) {
   const domain = STOCK_LOGO_DOMAINS[symbol];
-  const iconUrl = useContext(AssetIconsContext)[symbol];
+  const registeredIconUrl = useContext(AssetIconsContext)[symbol];
+  const resolvedIconUrl = iconUrl ?? registeredIconUrl;
 
   return (
     <span className={`asset-mark asset-${symbol.toLowerCase()} asset-mark-${size}`}>
-      <AssetLogo key={`${iconUrl ?? ""}:${domain ?? ""}`} iconUrl={iconUrl} domain={domain} symbol={symbol} />
+      <AssetLogo key={`${resolvedIconUrl ?? ""}:${domain ?? ""}`} iconUrl={resolvedIconUrl} domain={domain} symbol={symbol} />
     </span>
   );
 }
