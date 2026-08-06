@@ -381,6 +381,7 @@ button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px
   border: 0;
   border-radius: 0;
   background: transparent;
+  grid-template-columns: 1fr;
 }
 .account-settings-dialog .settings-actions { justify-content: flex-end; }
 .send-dialog-header {

@@ -202,12 +202,12 @@ export const rankingCandidateSchema = z.object({
 });
 
 export const personalizationPreferencesSchema = z.object({
-	executionProvider: executionProviderIdSchema.default("ZERO_EX"),
+	executionProvider: executionProviderIdSchema.default("UNISWAP"),
 	robinhoodExecutionProvider: z.enum(["ZERO_EX", "UNISWAP"]).optional(),
 	solanaExecutionProvider: z.enum(["JUPITER", "ZERO_EX"]).optional(),
 	activeChain: appChainSchema.default("ROBINHOOD"),
 	solanaExecutionWallet: solanaAddressSchema.optional(),
-	feedRankingProvider: feedRankingProviderIdSchema.default("ZERO_G"),
+	feedRankingProvider: feedRankingProviderIdSchema.default("DETERMINISTIC"),
 	cadence: z.enum(["daily", "weekly", "monthly"]),
 	periodLimitUsd: z
 		.number()

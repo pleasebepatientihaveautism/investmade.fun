@@ -1034,7 +1034,7 @@ function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 function emptyDraft(): PreferenceDraft {
 	return {
 		activeChain: "ROBINHOOD",
-		executionProvider: "ZERO_EX",
+		executionProvider: "UNISWAP",
 		feedRankingProvider: "DETERMINISTIC",
 		customPeriodLimitInput: "",
 		customTicketInput: "",
@@ -1045,7 +1045,7 @@ function emptyDraft(): PreferenceDraft {
 function defaultFeedRankingProvider(
 	chain: AppChain,
 ): OnboardingPreferences["feedRankingProvider"] {
-	return chain === "ROBINHOOD" ? "DETERMINISTIC" : "ZERO_G";
+	return "DETERMINISTIC";
 }
 
 function draftFromPreferences(
