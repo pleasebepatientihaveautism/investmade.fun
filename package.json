@@ -16,7 +16,8 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:uniswap": "node scripts/verify-uniswap.mjs",
+    "bench:0g": "tsx scripts/bench-0g.ts",
+    "verify:0x": "node scripts/verify-0x.mjs",
     "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
@@ -25,11 +26,16 @@
     "@connectrpc/connect-node": "^1.3.0",
     "@fontsource/archivo-black": "^5.2.6",
     "@fontsource/dm-sans": "^5.2.6",
+    "@fontsource/instrument-serif": "^5.3.0",
     "@privy-io/node": "0.27.0",
     "@privy-io/react-auth": "3.35.2",
+    "@solana-program/memo": "^0.8.0",
+    "@solana-program/system": "^0.8.0",
+    "@solana-program/token": "^0.6.0",
+    "@solana/kit": "^5.5.1",
+    "@solana/web3.js": "^1.98.4",
     "@substreams/core": "^0.17.0",
     "@types/canvas-confetti": "^1.9.0",
-    "@worldcoin/idkit-core": "^4.0.11",
     "canvas-confetti": "^1.9.4",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
@@ -62,6 +68,9 @@
   },
   "overrides": {
     "axios": "1.18.1",
+    "jayson": {
+      "uuid": "11.1.1"
+    },
     "uuid": "14.0.1",
     "ws": "8.21.1"
   }

@@ -18,6 +18,8 @@ export interface ReviewExecutionRecord {
 export interface ReviewBasket {
 	sessionId: string;
 	epochId: string;
+	chain: "ROBINHOOD" | "SOLANA";
+	executionProvider: "ZERO_EX" | "UNISWAP" | "JUPITER";
 	selected: Candidate[];
 	ticketSizeUsd: number;
 	periodLimitUsd: number;
@@ -28,6 +30,8 @@ export function reviewBasketKey(basket: ReviewBasket) {
 	return JSON.stringify({
 		sessionId: basket.sessionId,
 		epochId: basket.epochId,
+		executionProvider: basket.executionProvider,
+		chain: basket.chain,
 		assetIds: basket.selected.map((candidate) => candidate.assetId).sort(),
 		ticketSizeUsd: basket.ticketSizeUsd,
 		periodLimitUsd: basket.periodLimitUsd,
@@ -43,7 +47,8 @@ export function executionMatchesReviewBasket(
 		!record ||
 		!basket.selected.length ||
 		record.plan.sessionId !== basket.sessionId ||
-		record.plan.epochId !== basket.epochId
+		record.plan.epochId !== basket.epochId ||
+		record.plan.provider !== basket.executionProvider
 	) {
 		return false;
 	}
@@ -81,13 +86,23 @@ export async function executionPlanHashMatchesReviewBasket(
 	record: ReviewExecutionRecord,
 	basket: ReviewBasket,
 ) {
+	if (!basket.selected.length) return false;
 	const amountInBaseUnits = ticketSizeToBaseUnits(
 		basket.ticketSizeUsd,
 	).toString();
 	const request: ExecutionRequest = {
 		sessionId: basket.sessionId,
-		chainId: 4663,
-		inputToken: USDG_ADDRESS,
+		...(basket.chain === "SOLANA"
+			? {
+					chain: "SOLANA" as const,
+					cluster: "mainnet-beta" as const,
+					inputToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" as const,
+				}
+			: {
+					chain: "ROBINHOOD" as const,
+					chainId: 4663 as const,
+					inputToken: USDG_ADDRESS,
+				}),
 		periodLimitUsd: basket.periodLimitUsd,
 		selections: basket.selected.map((candidate) => ({
 			assetId: candidate.assetId,
@@ -97,7 +112,13 @@ export async function executionPlanHashMatchesReviewBasket(
 	};
 	const json = canonicalJson(
 		executionIntent(
-			{ id: basket.sessionId, epochId: basket.epochId },
+			{
+				id: basket.sessionId,
+				epochId: basket.epochId,
+				executionProvider: basket.executionProvider,
+				chain: basket.chain,
+				wallet: basket.wallet,
+			},
 			request,
 		),
 	);

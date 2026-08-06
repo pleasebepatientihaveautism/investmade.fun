@@ -1,36 +1,48 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight as LucideArrowRight } from "lucide-react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import {
+	useWallets as useSolanaWallets,
+	type ConnectedStandardSolanaWallet,
+} from "@privy-io/react-auth/solana";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import {
-	api,
+	ArrowLeft,
+	Bot,
+	ChevronLeft,
+	ChevronRight,
+	ArrowRight as LucideArrowRight,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	fillFeedPage,
+	nextFeedExcludedAssetIds,
+	shouldPrefetchNextFeed,
+} from "../domain/feed-pagination";
+import {
+	type AppChain,
+	type Candidate,
+	formatTicketSizeUsd,
+	type OnboardingPreferences,
+} from "../domain/schemas";
+import {
 	ApiError,
+	api,
 	configureApiAuth,
 	type ExecutionRecord,
 	type FeedResponse,
 	type PublicConfig,
 	type WeeklySession,
 } from "./api";
+import { AccountScreen } from "./components/AccountScreen";
 import { AppShell } from "./components/AppShell";
-import { ArrowRight } from "./components/Icons";
-import { SwipeCard } from "./components/SwipeCard";
+import { AssetIconProvider } from "./components/AssetMark";
 import { BudgetRail } from "./components/BudgetRail";
-import { ReviewScreen } from "./components/ReviewScreen";
-import { ReceiptScreen } from "./components/ReceiptScreen";
+import { ArrowRight } from "./components/Icons";
+import { Confetti } from "./components/magicui/confetti";
 import { Onboarding } from "./components/Onboarding";
 import { PositionsScreen } from "./components/PositionsScreen";
-import { AccountScreen } from "./components/AccountScreen";
-import { AssetIconProvider } from "./components/AssetMark";
-import { Confetti } from "./components/magicui/confetti";
-import {
-	formatTicketSizeUsd,
-	type Candidate,
-	type OnboardingPreferences,
-} from "../domain/schemas";
-import {
-	fillFeedPage,
-	nextFeedExcludedAssetIds,
-} from "../domain/feed-pagination";
+import { ReceiptScreen } from "./components/ReceiptScreen";
+import { ReviewScreen } from "./components/ReviewScreen";
+import { SwipeCard } from "./components/SwipeCard";
 import {
 	removeLegacyPreferences,
 	writeAccountPreferences,
@@ -42,6 +54,15 @@ type DecisionFeedback = "invest" | "skip";
 const LAST_EXECUTION_KEY = "investmade:last-execution";
 const LAST_EXECUTION_CANDIDATES_KEY = "investmade:last-execution-candidates";
 
+function rememberWarnings(
+	target: Map<string, string[]>,
+	response: FeedResponse,
+) {
+	for (const candidate of response.candidates) {
+		target.set(candidate.assetId, response.feed.warnings);
+	}
+}
+
 export function App({ config }: { config: PublicConfig }) {
 	const {
 		authenticated,
@@ -51,6 +72,8 @@ export function App({ config }: { config: PublicConfig }) {
 		user,
 	} = usePrivy();
 	const { wallets, ready: walletsReady } = useWallets();
+	const { wallets: solanaWallets, ready: solanaWalletsReady } =
+		useSolanaWallets();
 	const { client: smartWalletClient } = useSmartWallets();
 	const fundingWallet = authenticated
 		? wallets.find(
@@ -72,6 +95,7 @@ export function App({ config }: { config: PublicConfig }) {
 		: undefined;
 	const [view, setView] = useState<View>("week");
 	const [stage, setStage] = useState<Stage>("onboarding");
+	const [onboardingChain, setOnboardingChain] = useState<AppChain>("ROBINHOOD");
 	const [session, setSession] = useState<WeeklySession>();
 	const [feed, setFeed] = useState<FeedResponse>();
 	const [preferences, setPreferences] = useState<OnboardingPreferences>();
@@ -85,7 +109,23 @@ export function App({ config }: { config: PublicConfig }) {
 	const [feedExhausted, setFeedExhausted] = useState(false);
 	const [topUpRequest, setTopUpRequest] = useState(0);
 	const decisionTimer = useRef<number | undefined>(undefined);
-	const wallet = smartWalletAddress?.toLowerCase() ?? "";
+	const prefetchedFeed = useRef<
+		| {
+				key: string;
+				result: Promise<FeedResponse | undefined>;
+		  }
+		| undefined
+	>(undefined);
+	const warningsByAssetId = useRef(new Map<string, string[]>());
+	const activeChain = preferences?.activeChain ?? "ROBINHOOD";
+	const selectedSolanaWallet =
+		solanaWallets.find(
+			(candidate) => candidate.address === preferences?.solanaExecutionWallet,
+		) ?? solanaWallets[0];
+	const wallet =
+		activeChain === "SOLANA"
+			? (selectedSolanaWallet?.address ?? "")
+			: (smartWalletAddress?.toLowerCase() ?? "");
 	const fundingWalletAddress = fundingWallet?.address.toLowerCase() ?? "";
 	const displayWallet = wallet || fundingWalletAddress;
 	const smartWalletReady = Boolean(
@@ -95,10 +135,21 @@ export function App({ config }: { config: PublicConfig }) {
 	useEffect(() => {
 		configureApiAuth({
 			getAccessToken,
-			getWalletAddress: () => smartWalletAddress,
+			getWalletAddress: () => wallet || undefined,
+			getTxOriginAddress: () =>
+				activeChain === "SOLANA"
+					? selectedSolanaWallet?.address
+					: embeddedWallet?.address,
+			getWalletChain: () => activeChain,
 		});
 		return () => configureApiAuth(undefined);
-	}, [getAccessToken, smartWalletAddress]);
+	}, [
+		activeChain,
+		embeddedWallet?.address,
+		getAccessToken,
+		selectedSolanaWallet?.address,
+		wallet,
+	]);
 
 	useEffect(() => {
 		removeLegacyPreferences();
@@ -129,13 +180,55 @@ export function App({ config }: { config: PublicConfig }) {
 
 	const loadSession = useCallback(
 		async (preferences: OnboardingPreferences) => {
+			const sessionSolanaWallet =
+				solanaWallets.find(
+					(candidate) =>
+						candidate.address === preferences.solanaExecutionWallet,
+				) ?? solanaWallets[0];
+			const sessionWallet =
+				preferences.activeChain === "SOLANA"
+					? sessionSolanaWallet?.address
+					: smartWalletAddress;
+			configureApiAuth({
+				getAccessToken,
+				getWalletAddress: () => sessionWallet,
+				getTxOriginAddress: () =>
+					preferences.activeChain === "SOLANA"
+						? sessionSolanaWallet?.address
+						: embeddedWallet?.address,
+				getWalletChain: () => preferences.activeChain,
+			});
+			const prefetch = prefetchedFeed.current;
+			const minimumLoader = new Promise((resolve) =>
+				window.setTimeout(resolve, 1000),
+			);
 			setError("");
 			setView("week");
 			setStage("loading");
+			setPreferences(preferences);
+			setSession(undefined);
+			setFeed(undefined);
+			setIndex(0);
+			setSelectedIds([]);
+			setFeedExhausted(false);
 			try {
-				const opened = await api.openSession(preferences.cadence);
-				const generated = await api.generateFeed(opened.id, preferences);
-				setPreferences(preferences);
+				if (authenticated) await api.savePreferences(preferences);
+				const [opened, prefetched] = await Promise.all([
+					api.openSession(
+						preferences.cadence,
+						preferences.executionProvider,
+						preferences.activeChain,
+						preferences.feedRankingProvider,
+					),
+					prefetch?.key === JSON.stringify(preferences)
+						? prefetch.result
+						: undefined,
+				]);
+				const generated =
+					prefetched ?? (await api.generateFeed(opened.id, preferences));
+				await minimumLoader;
+				prefetchedFeed.current = undefined;
+				rememberWarnings(warningsByAssetId.current, generated);
 				setSession(opened);
 				setFeed({
 					...generated,
@@ -147,6 +240,7 @@ export function App({ config }: { config: PublicConfig }) {
 				scrollToTop();
 				setStage("swipe");
 			} catch (caught) {
+				await minimumLoader;
 				setError(
 					caught instanceof Error ? caught.message : "Could not open session",
 				);
@@ -154,8 +248,37 @@ export function App({ config }: { config: PublicConfig }) {
 				setStage("swipe");
 			}
 		},
-		[],
+		[
+			authenticated,
+			embeddedWallet?.address,
+			getAccessToken,
+			smartWalletAddress,
+			solanaWallets,
+		],
 	);
+
+	const prefetchFeed = useCallback((preferences: OnboardingPreferences) => {
+		const key = JSON.stringify(preferences);
+		if (prefetchedFeed.current?.key === key) return;
+		prefetchedFeed.current = {
+			key,
+			result: api
+				.openSession(
+					preferences.cadence,
+					preferences.executionProvider,
+					preferences.activeChain,
+					preferences.feedRankingProvider,
+				)
+				.then((opened) => api.generateFeed(opened.id, preferences))
+				.catch(() => undefined),
+		};
+	}, []);
+
+	useEffect(() => {
+		if (authenticated && user?.id && preferences) {
+			writeAccountPreferences(user.id, preferences);
+		}
+	}, [authenticated, preferences, user?.id]);
 
 	useEffect(() => {
 		if (!privyReady || authenticated) return;
@@ -163,6 +286,7 @@ export function App({ config }: { config: PublicConfig }) {
 		setStage("onboarding");
 		setSession(undefined);
 		setFeed(undefined);
+		warningsByAssetId.current.clear();
 		setPreferences(undefined);
 		setIndex(0);
 		setSelectedIds([]);
@@ -182,6 +306,15 @@ export function App({ config }: { config: PublicConfig }) {
 
 	const candidates = feed?.candidates ?? [];
 	const current = candidates[index];
+	const currentFeedCard = current
+		? feed?.feed.cards.find((card) => card.assetId === current.assetId)
+		: undefined;
+	const currentWarnings = current
+		? (warningsByAssetId.current.get(current.assetId) ??
+			feed?.feed.warnings ??
+			[])
+		: [];
+	const nextAssetId = candidates[index + 1]?.assetId;
 	const selected = selectedIds
 		.map((assetId) =>
 			candidates.find((candidate) => candidate.assetId === assetId),
@@ -189,19 +322,33 @@ export function App({ config }: { config: PublicConfig }) {
 		.filter((candidate): candidate is Candidate => Boolean(candidate));
 	const ticketSizeUsd = preferences?.ticketSizeUsd ?? 10;
 	const periodLimitUsd = preferences?.periodLimitUsd ?? 100;
-	const cadence = preferences?.cadence ?? "weekly";
 	const selectedTotalUsd = selected.length * ticketSizeUsd;
-	const canAddCurrent = selectedTotalUsd + ticketSizeUsd <= periodLimitUsd;
+	const stableToken = activeChain === "SOLANA" ? "USDC" : "USDG";
+	const executionProviderLabel =
+		preferences?.executionProvider === "JUPITER"
+			? "Jupiter"
+			: preferences?.executionProvider === "UNISWAP"
+				? "Uniswap"
+				: "0x";
+	const canAddCurrent =
+		selectedTotalUsd + ticketSizeUsd <= periodLimitUsd;
 
 	useEffect(() => {
-		for (const candidate of candidates.slice(index, index + 2)) {
-			void api.assetHistory(candidate.assetId).catch(() => undefined);
-		}
-	}, [candidates, index]);
+		if (!nextAssetId) return;
+		void Promise.all([
+			api.assetHistory(nextAssetId, "ALL"),
+			api.assetHistory(nextAssetId, "1M"),
+		]).catch(() => undefined);
+	}, [nextAssetId]);
 
 	const recoverReviewSession = useCallback(async () => {
 		if (!preferences) throw new Error("PREFERENCES_REQUIRED");
-		const opened = await api.openSession(preferences.cadence);
+		const opened = await api.openSession(
+			preferences.cadence,
+			preferences.executionProvider,
+			preferences.activeChain,
+			preferences.feedRankingProvider,
+		);
 		const generated = await api.generateFeed(opened.id, preferences);
 		const available = new Set(
 			generated.candidates.map((candidate) => candidate.assetId),
@@ -213,6 +360,7 @@ export function App({ config }: { config: PublicConfig }) {
 		if (!assetIds.length)
 			throw new Error("NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES");
 		setSession(opened);
+		rememberWarnings(warningsByAssetId.current, generated);
 		setFeed({
 			...generated,
 			candidates: fillFeedPage(generated.candidates),
@@ -222,14 +370,16 @@ export function App({ config }: { config: PublicConfig }) {
 	}, [preferences, selectedIds]);
 
 	const loadMoreCandidates = useCallback(async () => {
-		if (!feed || !preferences || !session || loadingMore || feedExhausted) return;
+		if (!feed || !preferences || !session || loadingMore || feedExhausted)
+			return;
 		setLoadingMore(true);
 		try {
 			const next = await api.generateFeed(
 				session.id,
 				preferences,
-				nextFeedExcludedAssetIds(feed, selectedIds),
+				nextFeedExcludedAssetIds(feed),
 			);
+			rememberWarnings(warningsByAssetId.current, next);
 			const nextCandidates = fillFeedPage(next.candidates);
 			setFeed((currentFeed) => {
 				if (!currentFeed) return next;
@@ -260,21 +410,14 @@ export function App({ config }: { config: PublicConfig }) {
 		} finally {
 			setLoadingMore(false);
 		}
-	}, [
-		feed,
-		feedExhausted,
-		loadingMore,
-		preferences,
-		selectedIds,
-		session,
-	]);
+	}, [feed, feedExhausted, loadingMore, preferences, session]);
 
 	useEffect(() => {
 		if (
-			!feed ||
+			!feed?.hasMore ||
 			feedExhausted ||
 			loadingMore ||
-			index < Math.max(0, candidates.length - 3)
+			!shouldPrefetchNextFeed(index, candidates.length)
 		) {
 			return;
 		}
@@ -288,13 +431,16 @@ export function App({ config }: { config: PublicConfig }) {
 		loadingMore,
 	]);
 
+	useEffect(() => {
+		const nextCandidate = candidates[index + 1];
+		if (!nextCandidate) return;
+		// One default-range prefetch per visible card stays within CoinGecko Demo limits.
+		void api.assetHistory(nextCandidate.assetId, "1M").catch(() => undefined);
+	}, [candidates, index]);
+
 	function decide(add: boolean) {
 		if (!current) return;
-		if (
-			add &&
-			!selectedIds.includes(current.assetId) &&
-			canAddCurrent
-		) {
+		if (add && !selectedIds.includes(current.assetId) && canAddCurrent) {
 			setSelectedIds((ids) => [...ids, current.assetId]);
 		}
 		setIndex((value) => Math.min(value + 1, candidates.length));
@@ -322,23 +468,101 @@ export function App({ config }: { config: PublicConfig }) {
 		if (target === "week" && stage === "loading" && feed) setStage("swipe");
 	}
 
+	const applyWalletPreferences = useCallback(
+		async (
+			chain: "ROBINHOOD" | "SOLANA",
+			solanaWallet?: ConnectedStandardSolanaWallet,
+		) => {
+			if (!preferences) return;
+			if (chain === "SOLANA" && !solanaWallet) {
+				setError("Connect or create a Solana wallet with Privy first.");
+				return;
+			}
+			const robinhoodProvider: "ZERO_EX" | "UNISWAP" =
+				preferences.activeChain === "SOLANA"
+					? (preferences.robinhoodExecutionProvider ?? "ZERO_EX")
+					: preferences.executionProvider === "UNISWAP"
+						? "UNISWAP"
+						: "ZERO_EX";
+			const solanaProvider: "JUPITER" | "ZERO_EX" =
+				preferences.activeChain === "SOLANA"
+					? preferences.executionProvider === "ZERO_EX"
+						? "ZERO_EX"
+						: "JUPITER"
+					: (preferences.solanaExecutionProvider ?? "JUPITER");
+			const next: OnboardingPreferences = {
+				...preferences,
+				activeChain: chain,
+				executionProvider: chain === "SOLANA" ? solanaProvider : robinhoodProvider,
+				robinhoodExecutionProvider: robinhoodProvider,
+				solanaExecutionProvider: solanaProvider,
+				solanaExecutionWallet:
+					solanaWallet?.address ?? preferences.solanaExecutionWallet,
+			};
+			prefetchedFeed.current = undefined;
+			setSettlement(undefined);
+			setSelectedIds([]);
+			setFeed(undefined);
+			setPreferences(next);
+			const nextWallet =
+				chain === "SOLANA" ? solanaWallet?.address : smartWalletAddress;
+			configureApiAuth({
+				getAccessToken,
+				getWalletAddress: () => nextWallet,
+				getTxOriginAddress: () =>
+					chain === "SOLANA" ? solanaWallet?.address : embeddedWallet?.address,
+				getWalletChain: () => chain,
+			});
+			await loadSession(next);
+		},
+		[
+			embeddedWallet?.address,
+			getAccessToken,
+			loadSession,
+			preferences,
+			smartWalletAddress,
+		],
+	);
+
 	return (
 		<AssetIconProvider>
 			<AppShell
 				active={view}
 				onNavigate={navigate}
 				wallet={displayWallet}
-				onWallet={login}
+				onWallet={() =>
+					login({
+						loginMethods: ["wallet", "email"],
+						walletChainType:
+							(stage === "onboarding" ? onboardingChain : activeChain) ===
+							"SOLANA"
+								? "solana-only"
+								: "ethereum-only",
+					})
+				}
 				walletReady={privyReady}
 				navigationEnabled={authenticated && stage !== "onboarding"}
 				fundingWallet={fundingWallet}
 				topUpRequest={topUpRequest}
+				activeChain={stage === "onboarding" ? onboardingChain : activeChain}
+				onChainChange={(chain) => {
+					void applyWalletPreferences(chain, selectedSolanaWallet);
+				}}
+				solanaWallets={solanaWallets}
+				solanaWalletsReady={solanaWalletsReady}
+				solanaAvailable={config.solana.available}
+				selectedSolanaWallet={selectedSolanaWallet}
+				onSolanaWalletChange={(selected) => {
+					void applyWalletPreferences("SOLANA", selected);
+				}}
 			>
 				{stage === "onboarding" ? (
 					<Onboarding
 						config={config}
 						onComplete={loadSession}
+						onPrefetch={prefetchFeed}
 						privyReady={privyReady && walletsReady}
+						onChainPreview={setOnboardingChain}
 					/>
 				) : view === "receipts" ? (
 					<ReceiptScreen
@@ -352,6 +576,10 @@ export function App({ config }: { config: PublicConfig }) {
 								settlement.plan.executionId,
 							);
 							setSettlement(reconciled);
+						}}
+						onViewPortfolio={() => {
+							scrollToTop();
+							setView("positions");
 						}}
 						onStartNextBasket={() => {
 							if (preferences) {
@@ -369,6 +597,8 @@ export function App({ config }: { config: PublicConfig }) {
 						)}
 						wallet={wallet}
 						demoMode={config.demoMode}
+						activeChain={activeChain}
+						solanaWallet={selectedSolanaWallet}
 					/>
 				) : view === "account" && preferences ? (
 					<AccountScreen
@@ -377,6 +607,9 @@ export function App({ config }: { config: PublicConfig }) {
 						smartWalletReady={smartWalletReady}
 						preferences={preferences}
 						developerMode={config.executionMode === "local-live"}
+						executionProviders={config.executionProviders}
+						solanaExecutionProviders={config.solana.executionProviders}
+						feedRankingProviders={config.feedRankingProviders}
 						onTopUp={() => setTopUpRequest((request) => request + 1)}
 						onResetDemoWeek={async () => {
 							await loadSession(preferences);
@@ -384,6 +617,8 @@ export function App({ config }: { config: PublicConfig }) {
 						}}
 						onSave={async (next) => {
 							if (user?.id) writeAccountPreferences(user.id, next);
+							prefetchedFeed.current = undefined;
+							setSettlement(undefined);
 							await loadSession(next);
 							setView("week");
 						}}
@@ -420,10 +655,14 @@ export function App({ config }: { config: PublicConfig }) {
 						onStartAnotherBasket={() => {
 							if (preferences) void loadSession(preferences);
 						}}
+						onTopUp={() => setTopUpRequest((request) => request + 1)}
 						ticketSizeUsd={ticketSizeUsd}
 						periodLimitUsd={periodLimitUsd}
 						wallet={wallet}
 						smartWalletReady={smartWalletReady}
+						liveExecution={config.executionMode !== "demo"}
+						activeChain={activeChain}
+						solanaWallet={selectedSolanaWallet}
 						onExecutionChange={(record) => {
 							setSettlement(record);
 							const snapshot = executionCandidates(
@@ -450,15 +689,13 @@ export function App({ config }: { config: PublicConfig }) {
 					<main className="swipe-page">
 						<section className="swipe-workspace">
 							<header className="page-heading">
-								<h1>Build your next basket</h1>
-								<p>
-									Swipe right to allocate {ticketSizeUsd} USDG. Nothing moves
-									until you review and confirm.
-								</p>
+								<h1>Build your basket</h1>
+								<p>Swipe right to add left to skip.</p>
 								{config.executionMode === "local-live" ? (
 									<p>
-										<b>Live signing enabled.</b> Real USDG → WETH Uniswap quote;
-										ranking evidence is local-only.
+										<b>Live signing enabled.</b> Real {stableToken} → asset{" "}
+										{executionProviderLabel} quote; ranking evidence is
+										local-only.
 									</p>
 								) : null}
 							</header>
@@ -472,14 +709,32 @@ export function App({ config }: { config: PublicConfig }) {
 								</div>
 							) : stage === "loading" || !feed ? (
 								<div className="loading-state">
-									<span />
+									<div className="feed-loader" role="img" aria-label="0G">
+										<b>0G</b>
+									</div>
 									<h2>Building your personal feed</h2>
 									<p>
-										{config.executionMode === "live"
-											? "Eligible assets. Privately ranked. TEE-verified."
-											: config.executionMode === "local-live"
-												? "Live Uniswap route. Local ranking evidence."
-												: "Demo assets. Bounded ranking. No broadcast."}
+										{config.executionMode === "live" ? (
+											"Eligible assets. Privately ranked. TEE-verified."
+										) : config.executionMode === "local-live" ? (
+											<span className="feed-providers">
+												<span className="feed-providers-label">
+													feed providers:
+												</span>
+												<span className="feed-provider">
+													<img
+														src="/assets/providers/0g-black.svg"
+														alt=""
+														aria-hidden="true"
+													/>
+													0G
+												</span>
+												<i aria-hidden="true">·</i>
+												<span className="feed-provider">CoinGecko</span>
+											</span>
+										) : (
+											"Demo assets. Bounded ranking. No broadcast."
+										)}
 									</p>
 								</div>
 							) : current ? (
@@ -488,9 +743,9 @@ export function App({ config }: { config: PublicConfig }) {
 										<button
 											type="button"
 											className="gesture gesture-skip"
-							onClick={() => animateDecision(false)}
-							aria-label="Skip asset"
-								disabled={Boolean(decisionFeedback)}
+											onClick={() => animateDecision(false)}
+											aria-label="Skip asset"
+											disabled={Boolean(decisionFeedback)}
 										>
 											<ArrowLeft />
 											<span>
@@ -499,10 +754,9 @@ export function App({ config }: { config: PublicConfig }) {
 										</button>
 										<SwipeCard
 											candidate={current}
-											index={index}
-											total={candidates.length}
-											executionMode={config.executionMode}
+											reason={currentFeedCard?.reason ?? current.reason}
 											ticketSizeUsd={ticketSizeUsd}
+											stableToken={stableToken}
 											feedback={decisionFeedback}
 											onSwipe={animateDecision}
 										/>
@@ -510,8 +764,8 @@ export function App({ config }: { config: PublicConfig }) {
 											type="button"
 											className="gesture gesture-add"
 											onClick={() => animateDecision(true)}
-											aria-label={`Add ${ticketSizeUsd} USDG`}
-								disabled={Boolean(decisionFeedback) || !canAddCurrent}
+											aria-label={`Add ${ticketSizeUsd} ${stableToken}`}
+											disabled={Boolean(decisionFeedback) || !canAddCurrent}
 										>
 											<LucideArrowRight />
 											<span>
@@ -519,6 +773,16 @@ export function App({ config }: { config: PublicConfig }) {
 											</span>
 										</button>
 									</div>
+									{currentWarnings.length ? (
+										<aside className="ai-warnings" aria-label="0G warnings">
+											<Bot aria-hidden="true" />
+											<ul>
+												{currentWarnings.map((warning) => (
+													<li key={warning}>{warning}</li>
+												))}
+											</ul>
+										</aside>
+									) : null}
 									<div
 										className={`card-actions${selected.length ? " has-selection" : ""}`}
 									>
@@ -528,15 +792,16 @@ export function App({ config }: { config: PublicConfig }) {
 											onClick={() => animateDecision(false)}
 											disabled={Boolean(decisionFeedback)}
 										>
-											Skip
+											<ChevronLeft aria-hidden="true" /> Skip
 										</button>
 										<button
 											type="button"
-							className="button button-primary"
-							onClick={() => animateDecision(true)}
-							disabled={Boolean(decisionFeedback) || !canAddCurrent}
+											className="button button-primary"
+											onClick={() => animateDecision(true)}
+											disabled={Boolean(decisionFeedback) || !canAddCurrent}
 										>
-											Add {ticketSizeUsd} USDG
+											Add {ticketSizeUsd} {stableToken}{" "}
+											<ChevronRight aria-hidden="true" />
 										</button>
 										<button
 											type="button"
@@ -553,7 +818,9 @@ export function App({ config }: { config: PublicConfig }) {
 								</>
 							) : loadingMore ? (
 								<div className="loading-state loading-more">
-									<span />
+									<div className="feed-loader" role="img" aria-label="0G">
+										<b>0G</b>
+									</div>
 									<h2>Finding more assets…</h2>
 									<p>Your selected basket stays ready to review.</p>
 								</div>
@@ -573,8 +840,10 @@ export function App({ config }: { config: PublicConfig }) {
 									<h2>That’s the feed.</h2>
 									<p>
 										{selected.length
-											? `${formatTicketSizeUsd(selected.length * ticketSizeUsd)} USDG is ready for review.`
-											: "You skipped every card. Your USDG stays in your wallet."}
+											? `${formatTicketSizeUsd(selected.length * ticketSizeUsd)} ${stableToken} is ready for review.`
+											: config.executionMode === "demo"
+												? `You skipped every card. Your ${stableToken} stays in your wallet.`
+												: `No more executable routes are available right now. Your ${stableToken} stays in your wallet.`}
 									</p>
 									<button
 										type="button"
@@ -593,18 +862,22 @@ export function App({ config }: { config: PublicConfig }) {
 						<BudgetRail
 							selected={selected}
 							onRemove={remove}
-							executionMode={config.executionMode}
 							ticketSizeUsd={ticketSizeUsd}
 							periodLimitUsd={periodLimitUsd}
-							cadence={cadence}
+							executionProvider={
+								preferences?.executionProvider ??
+								session?.executionProvider ??
+								"ZERO_EX"
+							}
+							activeChain={activeChain}
 						/>
 						<section className="evidence-detail">
 							<div className="feed-method-copy">
 								<h2>How your feed earns your trust</h2>
 								<p>
 									{config.executionMode === "demo"
-										? "Your rules shape the feed. Demo mode applies them to eligible fixture routes."
-										: "Your rules shape the feed. Live routes prove what is buyable. You sign every swap."}
+										? "Your rules shape the feed. Demo mode applies them to market fixtures."
+										: "Your rules shape the feed. CoinGecko powers card prices; executable routes are checked at review."}
 								</p>
 								<ol className="feed-pipeline">
 									<li>
@@ -612,15 +885,20 @@ export function App({ config }: { config: PublicConfig }) {
 										<span>Cadence, cap, ticket, risk, and asset mix.</span>
 									</li>
 									<li>
-										<strong>2 · Live routes</strong>
+										<strong>2 · Market data</strong>
 										<span>
 											{config.executionMode === "demo"
-												? "Fixture routes pass the same eligibility gates."
-												: "Fresh Robinhood Chain checks + exact Uniswap quote."}
+												? "Fixture prices exercise the same card flow."
+												: "Batched CoinGecko prices and cached chart history."}
 										</span>
 									</li>
 									<li>
-										<strong>3 · Private 0G rank</strong>
+										<strong>
+											3 ·{" "}
+											{preferences?.feedRankingProvider === "DETERMINISTIC"
+												? "Deterministic rank"
+												: "Private 0G rank"}
+										</strong>
 										<span>
 											{feed?.proof.teeVerified
 												? "0G ranks only verified candidates inside a TEE."
@@ -629,7 +907,9 @@ export function App({ config }: { config: PublicConfig }) {
 									</li>
 									<li>
 										<strong>4 · You approve</strong>
-										<span>Policy rechecks the route. Your wallet signs last.</span>
+										<span>
+											Policy rechecks the route. Your wallet signs last.
+										</span>
 									</li>
 								</ol>
 							</div>
@@ -650,6 +930,24 @@ export function App({ config }: { config: PublicConfig }) {
 										<div>
 											<dt>Model</dt>
 											<dd>{feed.proof.model}</dd>
+										</div>
+										<div>
+											<dt>Provider</dt>
+											<dd>
+												{feed.proof.teeVerified ? (
+													<a
+														href="https://pc.0g.ai/models/0gm-1.0-35b-a3b-sia"
+														target="_blank"
+														rel="noreferrer"
+													>
+														0G ↗
+													</a>
+												) : feed.proof.effectiveProvider === "DETERMINISTIC" ? (
+													"Deterministic"
+												) : (
+													"Local fixture"
+												)}
+											</dd>
 										</div>
 										<div>
 											<dt>Input</dt>
@@ -704,8 +1002,15 @@ function executionCandidates(
 	current: Candidate[],
 	fallback: Candidate[],
 ) {
-	const assetIds = new Set(record.plan.quotes.map((quote) => quote.assetId));
-	const selected = current.filter((candidate) => assetIds.has(candidate.assetId));
+	const quotes = new Map(
+		record.plan.quotes.map((quote) => [quote.assetId, quote]),
+	);
+	const withQuotes = (candidates: Candidate[]) =>
+		candidates.flatMap((candidate) => {
+			const quote = quotes.get(candidate.assetId);
+			return quote ? [{ ...candidate, quote }] : [];
+		});
+	const selected = withQuotes(current);
 	if (selected.length === record.plan.quotes.length) return selected;
-	return fallback.filter((candidate) => assetIds.has(candidate.assetId));
+	return withQuotes(fallback);
 }

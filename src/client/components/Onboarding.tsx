@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
+import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
-import { IDKit, orbLegacy } from "@worldcoin/idkit-core";
+import { Wallet } from "lucide-react";
 import {
+	type AppChain,
 	isPeriodLimitUsd,
 	isTicketSizeUsd,
 	type OnboardingPreferences,
 } from "../../domain/schemas";
-import type { PublicConfig } from "../api";
-import { api } from "../api";
+import { api, type PublicConfig } from "../api";
 import {
 	readAccountPreferences,
 	removeAccountPreferences,
 	writeAccountPreferences,
 } from "../preferences-storage";
+import { ChainMark } from "./ChainMark";
 import { ArrowRight, Check, Shield } from "./Icons";
 
 type Step =
@@ -24,14 +26,16 @@ type Step =
 	| "risk"
 	| "assets"
 	| "review"
-	| "wallet"
-	| "world";
+	| "wallet";
 type RiskMode = OnboardingPreferences["riskMode"];
 type AssetChoice = "CRYPTO" | "STOCK_TOKEN" | "BOTH";
 type PeriodLimitChoice = 10 | 50 | 100 | "custom";
 type TicketChoice = 0.1 | 1 | 10 | "custom";
 
 interface PreferenceDraft {
+	executionProvider?: OnboardingPreferences["executionProvider"];
+	feedRankingProvider?: OnboardingPreferences["feedRankingProvider"];
+	activeChain: AppChain;
 	cadence?: OnboardingPreferences["cadence"];
 	periodLimitUsd?: number;
 	periodLimitChoice?: PeriodLimitChoice;
@@ -155,23 +159,27 @@ const ASSET_OPTIONS: Array<{
 export function Onboarding({
 	config,
 	onComplete,
+	onPrefetch,
 	privyReady,
+	onChainPreview,
 }: {
 	config: PublicConfig;
-	onComplete: (preferences: OnboardingPreferences) => void;
+	onComplete: (preferences: OnboardingPreferences) => void | Promise<void>;
+	onPrefetch: (preferences: OnboardingPreferences) => void;
 	privyReady: boolean;
+	onChainPreview: (chain: AppChain) => void;
 }) {
-	const { authenticated, login, user } = usePrivy();
+	const { authenticated, linkWallet, login, user } = usePrivy();
 	const { createWallet } = useCreateWallet();
 	const { client: smartWalletClient, getClientForChain } = useSmartWallets();
 	const { wallets } = useWallets();
+	const { wallets: solanaWallets, ready: solanaWalletsReady } =
+		useSolanaWallets();
 	const embeddedWallet = wallets.find(
 		(candidate) =>
 			candidate.walletClientType === "privy" ||
 			candidate.walletClientType === "privy-v2",
 	);
-	const requiresWorldVerification =
-		config.executionMode === "live" && Boolean(config.world);
 	const wallet = (
 		user?.smartWallet?.address ??
 		smartWalletClient?.account.address ??
@@ -185,16 +193,29 @@ export function Onboarding({
 	const pendingPlan = useRef(false);
 	const hydratedUserId = useRef<string | undefined>(undefined);
 	const completedPreferences = toCompletedPreferences(draft);
+	const preferredSolanaWallet = solanaWallets[0];
+
+	useEffect(() => {
+		onChainPreview(draft.activeChain);
+	}, [draft.activeChain, onChainPreview]);
 
 	useEffect(() => {
 		const userId = authenticated ? user?.id : undefined;
 		if (!userId || pendingPlan.current || hydratedUserId.current === userId)
 			return;
 		hydratedUserId.current = userId;
-		const storedPreferences = readAccountPreferences(userId);
-		if (!storedPreferences) return;
-		setDraft(draftFromPreferences(storedPreferences));
-		setStep("wallet");
+		let cancelled = false;
+		api
+			.preferences()
+			.catch(() => readAccountPreferences(userId))
+			.then((storedPreferences) => {
+				if (cancelled || !storedPreferences) return;
+				setDraft(draftFromPreferences(storedPreferences));
+				setStep("wallet");
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, [authenticated, user?.id]);
 
 	useEffect(() => {
@@ -204,22 +225,31 @@ export function Onboarding({
 
 	useEffect(() => {
 		if (step !== "wallet" || !completedPreferences) return;
-		if (!authenticated || !embeddedWallet || !wallet || !smartWalletClient)
-			return;
-		if (user?.id) writeAccountPreferences(user.id, completedPreferences);
-		if (requiresWorldVerification) {
-			setStep("world");
+		if (!authenticated) return;
+		const isSolana = completedPreferences.activeChain === "SOLANA";
+		if (isSolana) {
+			if (!solanaWalletsReady || !preferredSolanaWallet) return;
+		} else if (!embeddedWallet || !wallet || !smartWalletClient) {
 			return;
 		}
+		const nextPreferences: OnboardingPreferences = isSolana
+			? {
+					...completedPreferences,
+					executionProvider: "JUPITER",
+					solanaExecutionWallet: preferredSolanaWallet?.address,
+				}
+			: completedPreferences;
+		if (user?.id) writeAccountPreferences(user.id, nextPreferences);
 		if (completingDemo.current) return;
 		completingDemo.current = true;
-		onComplete(completedPreferences);
+		void onComplete(nextPreferences);
 	}, [
 		authenticated,
 		completedPreferences,
 		embeddedWallet,
 		onComplete,
-		requiresWorldVerification,
+		preferredSolanaWallet,
+		solanaWalletsReady,
 		smartWalletClient,
 		user?.id,
 		wallet,
@@ -232,7 +262,26 @@ export function Onboarding({
 		setError("");
 		try {
 			if (!authenticated) {
-				login();
+				if (draft.activeChain === "SOLANA") {
+					await Promise.allSettled(
+						solanaWallets.map((candidate) => candidate.disconnect()),
+					);
+				}
+				login({
+					loginMethods: ["wallet", "email"],
+					walletChainType:
+						draft.activeChain === "SOLANA" ? "solana-only" : "ethereum-only",
+				});
+				return;
+			}
+			if (draft.activeChain === "SOLANA") {
+				if (!preferredSolanaWallet) {
+					linkWallet({
+						walletChainType: "solana-only",
+						description:
+							"Connect the Solana account that will sign Jupiter baskets.",
+					});
+				}
 				return;
 			}
 			if (!embeddedWallet) {
@@ -242,7 +291,6 @@ export function Onboarding({
 			const client =
 				smartWalletClient ?? (await getClientForChain({ id: 4663 }));
 			if (!client?.account.address) throw new Error("SMART_WALLET_NOT_READY");
-			if (requiresWorldVerification) setStep("world");
 		} catch (caught) {
 			const message = caught instanceof Error ? caught.message : "";
 			setError(
@@ -255,41 +303,29 @@ export function Onboarding({
 		}
 	}
 
-	async function verifyHuman() {
-		if (!config.world || !wallet || !completedPreferences) return;
-		setBusy(true);
+	function selectChain(chain: AppChain) {
+		completingDemo.current = false;
 		setError("");
-		try {
-			const rp = await api.worldSignature();
-			const request = await IDKit.request({
-				app_id: config.world.appId as `app_${string}`,
-				action: config.world.action,
-				rp_context: {
-					rp_id: config.world.rpId as `rp_${string}`,
-					nonce: rp.nonce,
-					created_at: rp.created_at,
-					expires_at: rp.expires_at,
-					signature: rp.sig,
-				},
-				allow_legacy_proofs: true,
-				environment: "production",
-			}).preset(orbLegacy({ signal: wallet }));
-			const proof = await request.pollUntilCompletion();
-			await api.verifyWorld(proof);
-			onComplete(completedPreferences);
-		} catch (caught) {
-			setError(
-				caught instanceof Error ? caught.message : "World verification failed.",
-			);
-		} finally {
-			setBusy(false);
-		}
+		setDraft((current) => ({
+			...current,
+			activeChain: chain,
+			feedRankingProvider: defaultFeedRankingProvider(chain),
+			executionProvider:
+				chain === "SOLANA"
+					? "JUPITER"
+					: current.executionProvider === "JUPITER"
+						? "ZERO_EX"
+						: current.executionProvider,
+		}));
 	}
 
 	function savePlan() {
 		const preferences = toCompletedPreferences(draft);
 		if (!preferences) return;
 		pendingPlan.current = true;
+		if (authenticated && user?.id)
+			writeAccountPreferences(user.id, preferences);
+		if (config.executionMode !== "live") onPrefetch(preferences);
 		setStep("wallet");
 	}
 
@@ -309,38 +345,65 @@ export function Onboarding({
 		>
 			<section className="onboarding-copy">
 				<span className="eyebrow">Your investment plan</span>
-				<h1>Stocks and crypto. One DCA ritual.</h1>
+				<h1>
+					Stocks and crypto. One <span className="headline-fun">fun</span>{" "}
+					ritual.
+				</h1>
 				<p>
-					Set your period, cap, ticket, risk mode, and asset mix. We use
-					those rules to constrain and rank executable candidates. Your USDG
-					stays in your wallet until you review and sign.
+					Set your rules, swipe through stocks and crypto, and turn DCA into a
+					ritual you&apos;ll actually enjoy. AI tracks market sentiment and
+					personalizes your feed; your preset limit keeps every session in
+					bounds, and nothing moves until you approve it.
 				</p>
+				<div className="onboarding-connect-control">
+					<ChainConnectSelector
+						value={draft.activeChain}
+						onChange={selectChain}
+						solanaAvailable={config.solana.available}
+					/>
+					<button
+						type="button"
+						className="button button-primary onboarding-connect-button"
+						onClick={connect}
+						disabled={busy || !privyReady}
+						aria-label={`Connect ${
+							draft.activeChain === "SOLANA" ? "Solana" : "Robinhood Chain"
+						} wallet with Privy`}
+						title={`Connect ${
+							draft.activeChain === "SOLANA" ? "Solana" : "Robinhood Chain"
+						} wallet with Privy`}
+					>
+						<Wallet size={18} strokeWidth={1.8} />
+						{busy
+							? "Waiting…"
+							: `Connect ${
+									draft.activeChain === "SOLANA" ? "Solana" : "Robinhood"
+								} wallet`}
+					</button>
+				</div>
 				<div className="onboarding-points">
 					<p>
 						<span>1</span>
 						<b>Set your rules</b>
 						<small>
-							Choose the reset period, max spend, and amount for each swipe.
+							Choose your investment schedule, spending limit, and amount for
+							each decision.
 						</small>
 					</p>
 					<p>
 						<span>2</span>
-						<b>
-							{config.executionMode === "live"
-								? "Private ranking"
-								: "Bounded ranking"}
-						</b>
+						<b>Your personalized asset feed</b>
 						<small>
-							{config.executionMode === "live"
-								? "Your settings become bounded input for private 0G inference."
-								: "Your settings constrain the local demo feed."}
+							Your preferences shape a feed of eligible assets, informed by live
+							market data.
 						</small>
 					</p>
 					<p>
 						<span>3</span>
-						<b>You call the shot</b>
+						<b>Review and approve</b>
 						<small>
-							AI ranks. Policy checks. Your wallet signs.
+							Policy checks every route. You review the basket and your wallet
+							signs once.
 						</small>
 					</p>
 				</div>
@@ -358,20 +421,14 @@ export function Onboarding({
 				) : (
 					<>
 						<Shield />
-						<span className="onboarding-kicker">
-							{step === "wallet" ? "Plan saved" : "Final identity check"}
-						</span>
-						<h2>
-							{step === "wallet"
-								? "Activate your Investmade Wallet"
-								: "Verify you’re human"}
-						</h2>
+						<span className="onboarding-kicker">Plan saved</span>
+						<h2>Activate your Investmade Wallet</h2>
 						<p>
-							{step === "wallet"
-								? config.demoMode
-									? "Real Privy wallet · simulated basket"
-									: "One smart wallet · one atomic basket · Robinhood Chain"
-								: "Bound to your authenticated investmade.fun account"}
+							{config.demoMode
+								? "Real Privy wallet · simulated basket"
+								: draft.activeChain === "SOLANA"
+									? "One Solana wallet · one atomic basket · Jupiter"
+									: "One smart wallet · one atomic basket · Robinhood Chain"}
 						</p>
 						{completedPreferences ? (
 							<PlanSummary preferences={completedPreferences} compact />
@@ -381,23 +438,28 @@ export function Onboarding({
 								{error}
 							</div>
 						) : null}
+						<ChainConnectSelector
+							value={draft.activeChain}
+							onChange={selectChain}
+							solanaAvailable={config.solana.available}
+						/>
 						<button
 							type="button"
 							className="button button-primary"
-							onClick={step === "wallet" ? connect : verifyHuman}
+							onClick={connect}
 							disabled={busy || !privyReady}
 						>
 							{busy
 								? "Waiting…"
-								: step === "wallet"
-									? authenticated
-										? embeddedWallet
-											? smartWalletClient
-												? "Investmade Wallet ready"
-												: "Activate Investmade Wallet"
-											: "Create Investmade Wallet"
-										: "Continue with Privy"
-									: "Open World verification"}{" "}
+								: authenticated
+									? embeddedWallet
+										? smartWalletClient
+											? "Investmade Wallet ready"
+											: "Activate Investmade Wallet"
+										: "Create Investmade Wallet"
+									: `Continue with ${
+											draft.activeChain === "SOLANA" ? "Solana" : "Robinhood"
+										}`}{" "}
 							<ArrowRight />
 						</button>
 						<button
@@ -416,6 +478,46 @@ export function Onboarding({
 				)}
 			</section>
 		</main>
+	);
+}
+
+function ChainConnectSelector({
+	value,
+	onChange,
+	solanaAvailable,
+}: {
+	value: AppChain;
+	onChange: (chain: AppChain) => void;
+	solanaAvailable: boolean;
+}) {
+	return (
+		<fieldset className="onboarding-chain-selector">
+			<legend className="sr-only">Choose wallet chain</legend>
+			<button
+				type="button"
+				className={value === "ROBINHOOD" ? "active" : ""}
+				aria-pressed={value === "ROBINHOOD"}
+				onClick={() => onChange("ROBINHOOD")}
+			>
+				<ChainMark chain="ROBINHOOD" />
+				<span>Robinhood</span>
+			</button>
+			<button
+				type="button"
+				className={value === "SOLANA" ? "active" : ""}
+				aria-pressed={value === "SOLANA"}
+				disabled={!solanaAvailable}
+				title={
+					solanaAvailable
+						? "Connect a Solana wallet"
+						: "Solana is unavailable until Jupiter and RPC are configured"
+				}
+				onClick={() => onChange("SOLANA")}
+			>
+				<ChainMark chain="SOLANA" />
+				<span>Solana</span>
+			</button>
+		</fieldset>
 	);
 }
 
@@ -442,17 +544,11 @@ function QuestionFlow({
 		return (
 			<>
 				<span className="onboarding-kicker">New here?</span>
-				<h2>Build your investment guardrails</h2>
+				<h2>Build your investing AI assistant</h2>
 				<p>
-					Set your period, cap, and decision size. Your money stays in your wallet
-					until you review and approve a basket.
+					Set your period, cap, and decision size. AI handles the feed. Your
+					money stays in your wallet until you review and approve a basket.
 				</p>
-				<div className="onboarding-trust-note">
-					<Shield />
-					<span>
-						<b>Non-custodial</b>Your answers never authorize a transaction.
-					</span>
-				</div>
 				<button
 					type="button"
 					className="button button-primary"
@@ -466,23 +562,27 @@ function QuestionFlow({
 
 	return (
 		<>
-			{step !== "review" ? <div className="question-progress">
-				<span>Question {questionNumber} of 5</span>
-				<div aria-hidden="true">
-					{[1, 2, 3, 4, 5].map((number) => (
-						<i
-							className={number <= questionNumber ? "active" : ""}
-							key={number}
-						/>
-					))}
+			{step !== "review" ? (
+				<div className="question-progress">
+					<span>Question {questionNumber} of 5</span>
+					<div aria-hidden="true">
+						{[1, 2, 3, 4, 5].map((number) => (
+							<i
+								className={number <= questionNumber ? "active" : ""}
+								key={number}
+							/>
+						))}
+					</div>
 				</div>
-			</div> : null}
+			) : null}
 
 			{step === "cadence" ? (
 				<>
 					<span className="onboarding-kicker">Your pace</span>
 					<h2>Investment period</h2>
-					<p>Choose when your limit resets. Keep it simple and stick to the plan.</p>
+					<p>
+						Choose when your limit resets. Keep it simple and stick to the plan.
+					</p>
 					<div className="question-options">
 						{CADENCE_OPTIONS.map((option) => (
 							<button
@@ -517,20 +617,70 @@ function QuestionFlow({
 				<>
 					<span className="onboarding-kicker">Your cap</span>
 					<h2>Set this limit</h2>
-					<p>Your max spend for each period. Nothing goes out until you approve a basket.</p>
+					<p>
+						Your max spend for each period. Nothing goes out until you approve a
+						basket.
+					</p>
 					<div className="question-options ticket-options">
 						{PERIOD_LIMIT_OPTIONS.map((option) => (
-							<button type="button" className={draft.periodLimitChoice === option.id ? "question-option selected" : "question-option"} onClick={() => onDraft((current) => ({ ...current, periodLimitChoice: option.id, periodLimitUsd: typeof option.id === "number" ? option.id : customPeriodLimit(current.customPeriodLimitInput) }))} key={option.id}>
-								<span><b>{option.title}</b>{option.id === 50 ? <em>Popular</em> : null}</span>
+							<button
+								type="button"
+								className={
+									draft.periodLimitChoice === option.id
+										? "question-option selected"
+										: "question-option"
+								}
+								onClick={() =>
+									onDraft((current) => ({
+										...current,
+										periodLimitChoice: option.id,
+										periodLimitUsd:
+											typeof option.id === "number"
+												? option.id
+												: customPeriodLimit(current.customPeriodLimitInput),
+									}))
+								}
+								key={option.id}
+							>
+								<span>
+									<b>{option.title}</b>
+									{option.id === 50 ? <em>Popular</em> : null}
+								</span>
 								<small>{option.description}</small>
 								{draft.periodLimitChoice === option.id ? <Check /> : null}
 							</button>
 						))}
 					</div>
 					{draft.periodLimitChoice === "custom" ? (
-						<label className="custom-ticket"><span>Custom period limit</span><span><b>$</b><input type="number" min="0.1" step="0.01" inputMode="decimal" value={draft.customPeriodLimitInput} onChange={(event) => { const value = event.target.value; onDraft((current) => ({ ...current, customPeriodLimitInput: value, periodLimitUsd: customPeriodLimit(value) })); }} placeholder="0.10" /></span><small>Your DCA budget is the basket limit.</small></label>
+						<label className="custom-ticket">
+							<span>Custom period limit</span>
+							<span>
+								<b>$</b>
+								<input
+									type="number"
+									min="0.1"
+									step="0.01"
+									inputMode="decimal"
+									value={draft.customPeriodLimitInput}
+									onChange={(event) => {
+										const value = event.target.value;
+										onDraft((current) => ({
+											...current,
+											customPeriodLimitInput: value,
+											periodLimitUsd: customPeriodLimit(value),
+										}));
+									}}
+									placeholder="0.10"
+								/>
+							</span>
+							<small>Your DCA budget is the basket limit.</small>
+						</label>
 					) : null}
-					<QuestionActions back={() => onStep("cadence")} next={() => onStep("ticket")} nextDisabled={!draft.periodLimitUsd} />
+					<QuestionActions
+						back={() => onStep("cadence")}
+						next={() => onStep("ticket")}
+						nextDisabled={!draft.periodLimitUsd}
+					/>
 				</>
 			) : null}
 
@@ -594,14 +744,17 @@ function QuestionFlow({
 								/>
 							</span>
 							<small id="custom-ticket-help">
-								{`USDG amount up to your ${draft.periodLimitUsd ?? 100}.00 DCA budget.`}
+								{`${draft.activeChain === "SOLANA" ? "USDC" : "USDG"} amount up to your ${draft.periodLimitUsd ?? 100}.00 DCA budget.`}
 							</small>
 						</label>
 					) : null}
 					<QuestionActions
 						back={() => onStep("limit")}
 						next={() => onStep("risk")}
-						nextDisabled={!draft.ticketSizeUsd || draft.ticketSizeUsd > (draft.periodLimitUsd ?? 100)}
+						nextDisabled={
+							!draft.ticketSizeUsd ||
+							draft.ticketSizeUsd > (draft.periodLimitUsd ?? 100)
+						}
 					/>
 				</>
 			) : null}
@@ -762,6 +915,7 @@ function PlanSummary({
 			: preferences.assetClasses[0] === "CRYPTO"
 				? "Crypto"
 				: "Tokenized stocks";
+	const stableToken = preferences.activeChain === "SOLANA" ? "USDC" : "USDG";
 	return (
 		<div className={compact ? "plan-summary compact" : "plan-summary"}>
 			<p>
@@ -770,11 +924,15 @@ function PlanSummary({
 			</p>
 			<p>
 				<span>Ticket size</span>
-				<b>{preferences.ticketSizeUsd} USDG per card</b>
+				<b>
+					{preferences.ticketSizeUsd} {stableToken} per card
+				</b>
 			</p>
 			<p>
 				<span>Period limit</span>
-				<b>{preferences.periodLimitUsd ?? 100} USDG total</b>
+				<b>
+					{preferences.periodLimitUsd ?? 100} {stableToken} total
+				</b>
 			</p>
 			<p>
 				<span>Risk mode</span>
@@ -794,9 +952,15 @@ function isQuestionStep(
 	Step,
 	"welcome" | "cadence" | "limit" | "ticket" | "risk" | "assets" | "review"
 > {
-	return ["welcome", "cadence", "limit", "ticket", "risk", "assets", "review"].includes(
-		step,
-	);
+	return [
+		"welcome",
+		"cadence",
+		"limit",
+		"ticket",
+		"risk",
+		"assets",
+		"review",
+	].includes(step);
 }
 
 function assetClassesFrom(
@@ -829,6 +993,15 @@ function toCompletedPreferences(
 	)
 		return;
 	return {
+		executionProvider:
+			draft.activeChain === "SOLANA"
+				? "JUPITER"
+				: draft.executionProvider === "JUPITER"
+					? "ZERO_EX"
+					: (draft.executionProvider ?? "ZERO_EX"),
+		activeChain: draft.activeChain,
+		feedRankingProvider:
+			draft.feedRankingProvider ?? defaultFeedRankingProvider(draft.activeChain),
 		cadence: draft.cadence,
 		periodLimitUsd: draft.periodLimitUsd,
 		ticketSizeUsd: draft.ticketSizeUsd,
@@ -840,6 +1013,15 @@ function toCompletedPreferences(
 
 function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 	return {
+		executionProvider:
+			draft.activeChain === "SOLANA"
+				? "JUPITER"
+				: draft.executionProvider === "JUPITER"
+					? "ZERO_EX"
+					: (draft.executionProvider ?? "ZERO_EX"),
+		activeChain: draft.activeChain,
+		feedRankingProvider:
+			draft.feedRankingProvider ?? defaultFeedRankingProvider(draft.activeChain),
 		cadence: draft.cadence ?? "weekly",
 		periodLimitUsd: draft.periodLimitUsd ?? 100,
 		ticketSizeUsd: draft.ticketSizeUsd ?? 10,
@@ -851,22 +1033,36 @@ function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 
 function emptyDraft(): PreferenceDraft {
 	return {
+		activeChain: "ROBINHOOD",
+		executionProvider: "ZERO_EX",
+		feedRankingProvider: "DETERMINISTIC",
 		customPeriodLimitInput: "",
 		customTicketInput: "",
 		riskDisclosureAccepted: false,
 	};
 }
 
+function defaultFeedRankingProvider(
+	chain: AppChain,
+): OnboardingPreferences["feedRankingProvider"] {
+	return chain === "ROBINHOOD" ? "DETERMINISTIC" : "ZERO_G";
+}
+
 function draftFromPreferences(
 	preferences: OnboardingPreferences,
 ): PreferenceDraft {
 	return {
+		executionProvider: preferences.executionProvider,
+		feedRankingProvider: preferences.feedRankingProvider,
+		activeChain: preferences.activeChain,
 		cadence: preferences.cadence,
 		periodLimitUsd: preferences.periodLimitUsd ?? 100,
 		periodLimitChoice: isPresetPeriodLimit(preferences.periodLimitUsd ?? 100)
-			? (preferences.periodLimitUsd ?? 100) as 10 | 50 | 100
+			? ((preferences.periodLimitUsd ?? 100) as 10 | 50 | 100)
 			: "custom",
-		customPeriodLimitInput: isPresetPeriodLimit(preferences.periodLimitUsd ?? 100)
+		customPeriodLimitInput: isPresetPeriodLimit(
+			preferences.periodLimitUsd ?? 100,
+		)
 			? ""
 			: String(preferences.periodLimitUsd),
 		ticketSizeUsd: preferences.ticketSizeUsd,
@@ -891,9 +1087,7 @@ function customTicket(value: string): number | undefined {
 function customPeriodLimit(value: string): number | undefined {
 	const parsed = Number(value);
 	const rounded = Math.round(parsed * 100) / 100;
-	return isPeriodLimitUsd(rounded)
-		? rounded
-		: undefined;
+	return isPeriodLimitUsd(rounded) ? rounded : undefined;
 }
 
 function isPresetPeriodLimit(value: number): value is 10 | 50 | 100 {

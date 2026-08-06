@@ -1,5 +1,13 @@
 import { Pool, type PoolClient } from "pg";
-import type { ExecutionPlan } from "../domain/schemas.js";
+import {
+	executionPlanSchema,
+	onboardingPreferencesSchema,
+	type AppChain,
+	type ExecutionPlan,
+	type ExecutionProviderId,
+	type FeedRankingProviderId,
+	type OnboardingPreferences,
+} from "../domain/schemas.js";
 import type {
   ExecutionRecord,
   SettledOutput,
@@ -9,8 +17,12 @@ import type {
 
 interface SessionRow {
   id: string;
+  owner_id: string | null;
   wallet: string;
   epoch_id: string;
+  chain: AppChain | null;
+  execution_provider: ExecutionProviderId;
+  feed_ranking_provider: FeedRankingProviderId | null;
   status: WeeklySession["status"];
   execution_id: string | null;
   created_at: Date;
@@ -38,14 +50,126 @@ export class PostgresStateStore implements StateStore {
     });
   }
 
-  async openSession(wallet: string, epochId: string): Promise<WeeklySession> {
+  async getProviderSnapshot(key: string) {
+    const result = await this.pool.query<{
+      snapshot: unknown;
+      expires_at: Date;
+    }>(
+      `SELECT snapshot, expires_at FROM asset_metadata_cache
+       WHERE cache_key = $1 AND expires_at > now()`,
+      [key]
+    );
+    const row = result.rows[0];
+    return row
+      ? { value: row.snapshot, expiresAt: row.expires_at.toISOString() }
+      : undefined;
+  }
+
+  async setProviderSnapshot(
+    key: string,
+    provider: string,
+    value: unknown,
+    expiresAt: string
+  ) {
+    await this.pool.query(
+      `INSERT INTO asset_metadata_cache (
+         cache_key, provider, snapshot, expires_at
+       ) VALUES ($1, $2, $3::jsonb, $4)
+       ON CONFLICT (cache_key) DO UPDATE SET
+         provider = EXCLUDED.provider,
+         snapshot = EXCLUDED.snapshot,
+         expires_at = EXCLUDED.expires_at,
+         updated_at = now()`,
+      [key, provider, JSON.stringify(value), expiresAt]
+    );
+  }
+
+  async getPreferences(ownerId: string) {
+    const result = await this.pool.query<{ preferences: unknown }>(
+      `SELECT preferences FROM user_preferences
+       WHERE owner_id = $1 OR (owner_id IS NULL AND wallet = $1)
+       ORDER BY owner_id NULLS LAST LIMIT 1`,
+      [ownerId.toLowerCase()]
+    );
+    return result.rows[0]
+      ? onboardingPreferencesSchema.parse(result.rows[0].preferences)
+      : undefined;
+  }
+
+  async setPreferences(
+    ownerId: string,
+    preferences: OnboardingPreferences,
+    wallet = ownerId
+  ) {
+    const parsed = onboardingPreferencesSchema.parse(preferences);
+    await this.pool.query(
+      `INSERT INTO user_preferences (wallet, owner_id, execution_provider, preferences)
+       VALUES ($1, $2, $3, $4::jsonb)
+       ON CONFLICT (owner_id) WHERE owner_id IS NOT NULL DO UPDATE
+       SET wallet = EXCLUDED.wallet,
+           execution_provider = EXCLUDED.execution_provider,
+           preferences = EXCLUDED.preferences,
+           updated_at = now()`,
+      [wallet.toLowerCase(), ownerId.toLowerCase(), parsed.executionProvider, JSON.stringify(parsed)]
+    );
+    return parsed;
+  }
+
+  async invalidatePreparedExecutions(ownerId: string) {
+    const normalized = ownerId.toLowerCase();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const prepared = await client.query<{ id: string }>(
+        `SELECT e.id
+         FROM executions e
+         JOIN weekly_sessions s ON s.id = e.session_id
+         WHERE (s.owner_id = $1 OR (s.owner_id IS NULL AND s.wallet = $1))
+           AND e.status = 'PREPARED'
+         FOR UPDATE`,
+        [normalized]
+      );
+      const ids = prepared.rows.map((row) => row.id);
+      if (ids.length) {
+        await client.query(
+          `UPDATE weekly_sessions
+           SET execution_id = NULL, status = 'OPEN', updated_at = now()
+           WHERE execution_id = ANY($1::uuid[])`,
+          [ids]
+        );
+        await client.query(
+          "DELETE FROM executions WHERE id = ANY($1::uuid[]) AND status = 'PREPARED'",
+          [ids]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async openSession(
+    wallet: string,
+    epochId: string,
+    executionProvider: ExecutionProviderId,
+    chain: AppChain = "ROBINHOOD",
+    ownerId = wallet,
+    feedRankingProvider: FeedRankingProviderId = "ZERO_G"
+  ): Promise<WeeklySession> {
+    const normalizedWallet =
+      chain === "ROBINHOOD" ? wallet.toLowerCase() : wallet;
     const result = await this.pool.query<SessionRow>(
-      `INSERT INTO weekly_sessions (wallet, epoch_id, status)
-       VALUES ($1, $2, 'OPEN')
-       ON CONFLICT (wallet, epoch_id)
-       DO UPDATE SET wallet = EXCLUDED.wallet
-       RETURNING id, wallet, epoch_id, status, execution_id, created_at`,
-      [wallet.toLowerCase(), epochId]
+      `INSERT INTO weekly_sessions (
+         wallet, owner_id, epoch_id, chain, execution_provider, feed_ranking_provider, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, 'OPEN')
+       ON CONFLICT (wallet, epoch_id, chain, execution_provider, feed_ranking_provider)
+       DO UPDATE SET owner_id = EXCLUDED.owner_id
+       RETURNING id, owner_id, wallet, epoch_id, chain, execution_provider, feed_ranking_provider, status, execution_id, created_at`,
+      [normalizedWallet, ownerId.toLowerCase(), epochId, chain, executionProvider, feedRankingProvider]
     );
     const row = result.rows[0];
     if (!row) throw new Error("SESSION_UPSERT_FAILED");
@@ -54,31 +178,11 @@ export class PostgresStateStore implements StateStore {
 
   async getSession(id: string): Promise<WeeklySession | undefined> {
     const result = await this.pool.query<SessionRow>(
-      `SELECT id, wallet, epoch_id, status, execution_id, created_at
+      `SELECT id, owner_id, wallet, epoch_id, chain, execution_provider, feed_ranking_provider, status, execution_id, created_at
        FROM weekly_sessions WHERE id = $1`,
       [id]
     );
     return result.rows[0] ? mapSession(result.rows[0]) : undefined;
-  }
-
-  async bindHuman(wallet: string, nullifierDigest: string): Promise<void> {
-    const result = await this.pool.query(
-      `INSERT INTO human_verifications (wallet, nullifier_digest)
-       VALUES ($1, $2)
-       ON CONFLICT (wallet)
-       DO UPDATE SET verified_at = now()
-       WHERE human_verifications.nullifier_digest = EXCLUDED.nullifier_digest`,
-      [wallet.toLowerCase(), nullifierDigest]
-    );
-    if (result.rowCount !== 1) throw new Error("WORLD_PROOF_ALREADY_BOUND");
-  }
-
-  async isHumanVerified(wallet: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT 1 FROM human_verifications WHERE wallet = $1 LIMIT 1`,
-      [wallet.toLowerCase()]
-    );
-    return result.rowCount === 1;
   }
 
   async reserveExecution(sessionId: string, plan: ExecutionPlan): Promise<ExecutionRecord> {
@@ -86,7 +190,7 @@ export class PostgresStateStore implements StateStore {
     try {
       await client.query("BEGIN");
       const sessionResult = await client.query<SessionRow>(
-        `SELECT id, wallet, epoch_id, status, execution_id, created_at
+        `SELECT id, owner_id, wallet, epoch_id, chain, execution_provider, feed_ranking_provider, status, execution_id, created_at
          FROM weekly_sessions WHERE id = $1 FOR UPDATE`,
         [sessionId]
       );
@@ -101,9 +205,17 @@ export class PostgresStateStore implements StateStore {
         throw new Error("EPOCH_ALREADY_EXECUTED");
       }
       await client.query(
-        `INSERT INTO executions (id, session_id, authorized_plan_hash, plan, status)
-         VALUES ($1, $2, $3, $4::jsonb, 'PREPARED')`,
-        [plan.executionId, sessionId, plan.authorizedPlanHash, JSON.stringify(plan)]
+        `INSERT INTO executions (
+           id, session_id, authorized_plan_hash, execution_provider, plan, status
+         )
+         VALUES ($1, $2, $3, $4, $5::jsonb, 'PREPARED')`,
+        [
+          plan.executionId,
+          sessionId,
+          plan.authorizedPlanHash,
+          plan.provider,
+          JSON.stringify(plan)
+        ]
       );
       await client.query(
         `UPDATE weekly_sessions
@@ -136,15 +248,26 @@ export class PostgresStateStore implements StateStore {
     }
   }
 
-  async refreshPreparedExecution(id: string, plan: ExecutionPlan): Promise<ExecutionRecord> {
+  async refreshPreparedExecution(
+    id: string,
+    expectedAuthorizedPlanHash: string,
+    plan: ExecutionPlan
+  ): Promise<ExecutionRecord> {
     const result = await this.pool.query<ExecutionRow>(
       `UPDATE executions
-       SET plan = $2::jsonb, updated_at = now()
+       SET plan = $2::jsonb,
+           authorized_plan_hash = $4,
+           updated_at = now()
        WHERE id = $1
          AND status = 'PREPARED'
          AND authorized_plan_hash = $3
        RETURNING plan, status, submission_mode, transaction_hashes, settled_outputs, settled_at`,
-      [id, JSON.stringify({ ...plan, executionId: id }), plan.authorizedPlanHash]
+      [
+        id,
+        JSON.stringify({ ...plan, executionId: id }),
+        expectedAuthorizedPlanHash,
+        plan.authorizedPlanHash
+      ]
     );
     if (!result.rows[0]) throw new Error("EPOCH_ALREADY_EXECUTED");
     return mapExecution(result.rows[0]);
@@ -187,8 +310,12 @@ export class PostgresStateStore implements StateStore {
 function mapSession(row: SessionRow): WeeklySession {
   return {
     id: row.id,
+    ownerId: row.owner_id ?? row.wallet,
     wallet: row.wallet,
     epochId: row.epoch_id,
+    chain: row.chain ?? "ROBINHOOD",
+    executionProvider: row.execution_provider,
+    feedRankingProvider: row.feed_ranking_provider ?? "ZERO_G",
     status: row.status,
     executionId: row.execution_id ?? undefined,
     createdAt: row.created_at.toISOString()
@@ -197,7 +324,7 @@ function mapSession(row: SessionRow): WeeklySession {
 
 function mapExecution(row: ExecutionRow): ExecutionRecord {
   return {
-    plan: row.plan,
+    plan: executionPlanSchema.parse(row.plan),
     status: row.status,
     submissionMode: row.submission_mode,
     transactionHashes: row.transaction_hashes,

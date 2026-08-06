@@ -4,7 +4,7 @@ export interface PortfolioAsset {
   currentPriceUsd: number;
   history?: {
     period?: "1M";
-    source?: "the-graph" | "demo" | "unavailable";
+    source?: "coingecko" | "demo" | "unavailable";
     points: Array<{ timestamp: number; price: number }>;
   };
 }

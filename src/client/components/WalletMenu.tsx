@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets, type ConnectedWallet } from "@privy-io/react-auth";
+import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { UserPill } from "@privy-io/react-auth/ui";
 import { Dialog, Popover, Select } from "radix-ui";
@@ -11,7 +12,7 @@ import {
   LogOut,
   Send,
   Settings,
-  WalletCards,
+  Wallet,
   X
 } from "lucide-react";
 import {
@@ -33,6 +34,7 @@ import {
   USDG_ADDRESS,
   USDG_DECIMALS
 } from "../../domain/constants";
+import { ChainMark } from "./ChainMark";
 
 const ROBINHOOD_RPC_URL = "https://rpc.mainnet.chain.robinhood.com";
 const ROBINHOOD_EXPLORER_URL = "https://robinhoodchain.blockscout.com";
@@ -65,11 +67,25 @@ const SEND_TOKENS = buildSendTokens();
 export function WalletMenu({
   wallet,
   fundingWallet,
-  topUpRequest = 0
+  topUpRequest = 0,
+  activeChain,
+  onChainChange,
+  solanaWallets,
+  solanaWalletsReady,
+  solanaAvailable,
+  selectedSolanaWallet,
+  onSolanaWalletChange
 }: {
   wallet: string;
   fundingWallet?: ConnectedWallet;
   topUpRequest?: number;
+  activeChain: "ROBINHOOD" | "SOLANA";
+  onChainChange: (chain: "ROBINHOOD" | "SOLANA") => void;
+  solanaWallets: ConnectedStandardSolanaWallet[];
+  solanaWalletsReady: boolean;
+  solanaAvailable: boolean;
+  selectedSolanaWallet?: ConnectedStandardSolanaWallet;
+  onSolanaWalletChange: (wallet: ConnectedStandardSolanaWallet) => void;
 }) {
   const { logout } = usePrivy();
   const { wallets } = useWallets();
@@ -87,6 +103,13 @@ export function WalletMenu({
   const [sendError, setSendError] = useState("");
   const [status, setStatus] = useState<SendStatus>("idle");
   const [transactionHash, setTransactionHash] = useState<Hex>();
+
+  async function disconnectAndLogout() {
+    await Promise.allSettled(
+      solanaWallets.map((candidate) => candidate.disconnect())
+    );
+    await logout();
+  }
 
   const selectedToken = useMemo(
     () => SEND_TOKENS.find((token) => token.id === tokenId) ?? DEFAULT_SEND_TOKEN,
@@ -278,7 +301,7 @@ export function WalletMenu({
             className="wallet-menu-trigger"
             aria-label={`Open wallet menu for ${wallet}`}
           >
-            <WalletCards aria-hidden="true" />
+            <Wallet aria-hidden="true" />
             {shortAddress(wallet)}
             <ChevronDown className="wallet-menu-chevron" aria-hidden="true" />
           </button>
@@ -291,13 +314,73 @@ export function WalletMenu({
             collisionPadding={12}
           >
             <div className="wallet-menu-heading">
-              <span>Investmade Wallet</span>
+              <span>{activeChain === "SOLANA" ? "Solana wallet" : "Investmade Wallet"}</span>
               <strong>{shortAddress(wallet)}</strong>
             </div>
-            <button type="button" className="wallet-menu-action primary" onClick={openSend}>
-              <Send aria-hidden="true" />
-              Send tokens
-            </button>
+            <fieldset className="wallet-chain-selector" aria-label="Active chain">
+              <button
+                type="button"
+                className={activeChain === "ROBINHOOD" ? "active" : ""}
+                onClick={() => onChainChange("ROBINHOOD")}
+              >
+                <ChainMark chain="ROBINHOOD" />
+                <span>Robinhood</span>
+              </button>
+              <button
+                type="button"
+                className={activeChain === "SOLANA" ? "active" : ""}
+                onClick={() => onChainChange("SOLANA")}
+                disabled={
+                  !solanaAvailable ||
+                  !solanaWalletsReady ||
+                  !solanaWallets.length
+                }
+                title={
+                  solanaAvailable
+                    ? "Use Solana"
+                    : "Jupiter and Solana RPC are not configured"
+                }
+              >
+                <ChainMark chain="SOLANA" />
+                <span>Solana</span>
+              </button>
+            </fieldset>
+            {activeChain === "SOLANA" ? (
+              <>
+                <label className="wallet-menu-wallet-select">
+                  <span>Signing wallet</span>
+                  <select
+                    value={selectedSolanaWallet?.address ?? ""}
+                    onChange={(event) => {
+                      const selected = solanaWallets.find(
+                        (candidate) => candidate.address === event.target.value
+                      );
+                      if (selected) onSolanaWalletChange(selected);
+                    }}
+                  >
+                    {solanaWallets.map((candidate) => (
+                      <option value={candidate.address} key={candidate.address}>
+                        {shortAddress(candidate.address)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <a
+                  className="wallet-menu-action primary"
+                  href={`https://explorer.solana.com/address/${wallet}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink aria-hidden="true" />
+                  View on Solana Explorer
+                </a>
+              </>
+            ) : (
+              <button type="button" className="wallet-menu-action primary" onClick={openSend}>
+                <Send aria-hidden="true" />
+                Send tokens
+              </button>
+            )}
             <button
               type="button"
               className="wallet-menu-action"
@@ -314,7 +397,7 @@ export function WalletMenu({
             <button
               type="button"
               className="wallet-menu-action danger"
-              onClick={() => void logout()}
+              onClick={() => void disconnectAndLogout()}
             >
               <LogOut aria-hidden="true" />
               Log out

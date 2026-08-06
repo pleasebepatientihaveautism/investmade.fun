@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { calculatePortfolioSnapshot } from "../src/client/portfolio.js";
 
 describe("calculatePortfolioSnapshot", () => {
-  it("weights graph history by each wallet balance", () => {
+  it("weights CoinGecko history by each wallet balance", () => {
     const snapshot = calculatePortfolioSnapshot([
       {
         rawBalance: "1000000000000000000",
@@ -10,7 +10,7 @@ describe("calculatePortfolioSnapshot", () => {
         currentPriceUsd: 10,
         history: {
           period: "1M",
-          source: "the-graph",
+          source: "coingecko",
           points: [
             { timestamp: 1, price: 8 },
             { timestamp: 2, price: 10 }
@@ -23,7 +23,7 @@ describe("calculatePortfolioSnapshot", () => {
         currentPriceUsd: 5,
         history: {
           period: "1M",
-          source: "the-graph",
+          source: "coingecko",
           points: [
             { timestamp: 1, price: 4 },
             { timestamp: 2, price: 5 }
@@ -41,7 +41,7 @@ describe("calculatePortfolioSnapshot", () => {
     ]);
   });
 
-  it("keeps holdings without graph history at their current value", () => {
+  it("keeps holdings without CoinGecko history at their current value", () => {
     const snapshot = calculatePortfolioSnapshot([
       {
         rawBalance: "1",
@@ -49,7 +49,7 @@ describe("calculatePortfolioSnapshot", () => {
         currentPriceUsd: 10,
         history: {
           period: "1M",
-          source: "the-graph",
+          source: "coingecko",
           points: [
             { timestamp: 1, price: 8 },
             { timestamp: 2, price: 10 }

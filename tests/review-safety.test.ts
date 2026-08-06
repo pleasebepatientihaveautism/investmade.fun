@@ -23,10 +23,12 @@ describe("review signing safety", () => {
 		const [candidate] = await provider.getCandidates(
 			"0x71f30000000000000000000000000000000009a2",
 		);
-		if (!candidate) throw new Error("TEST_CANDIDATE_REQUIRED");
+		if (!candidate?.quote) throw new Error("TEST_CANDIDATE_REQUIRED");
 		const basket: ReviewBasket = {
+			chain: "ROBINHOOD",
 			sessionId: "session-1",
 			epochId: "2026-W30:basket:test",
+			executionProvider: "ZERO_EX",
 			selected: [candidate],
 			ticketSizeUsd: 0.1,
 			periodLimitUsd: 10,
@@ -49,12 +51,20 @@ describe("review signing safety", () => {
 				executionId: "execution-1",
 				sessionId: basket.sessionId,
 				epochId: basket.epochId,
+				provider: basket.executionProvider,
+				chain: "ROBINHOOD",
 				chainId: 4663,
 				inputToken: request.inputToken,
 				totalInputBaseUnits: amountInBaseUnits,
 				authorizedPlanHash: sha256(
 					executionIntent(
-						{ id: basket.sessionId, epochId: basket.epochId },
+						{
+							id: basket.sessionId,
+							epochId: basket.epochId,
+							executionProvider: basket.executionProvider,
+							chain: "ROBINHOOD",
+							wallet: basket.wallet,
+						},
 						request,
 					),
 				),

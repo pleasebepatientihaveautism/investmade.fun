@@ -26,11 +26,14 @@ class MemoryStorage implements PreferencesStorage {
 }
 
 const preferences: OnboardingPreferences = {
+	activeChain: "ROBINHOOD",
 	cadence: "weekly",
 	ticketSizeUsd: 10,
 	riskMode: "balanced",
 	assetClasses: ["CRYPTO", "STOCK_TOKEN"],
 	riskDisclosureAccepted: true,
+	executionProvider: "ZERO_EX",
+	feedRankingProvider: "ZERO_G",
 };
 
 describe("account-scoped preference storage", () => {
