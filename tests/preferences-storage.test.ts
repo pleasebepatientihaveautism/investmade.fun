@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { OnboardingPreferences } from "../src/domain/schemas.js";
+import {
+	personalizationPreferencesSchema,
+	type OnboardingPreferences,
+} from "../src/domain/schemas.js";
 import {
 	preferencesKey,
 	readAccountPreferences,
@@ -37,6 +40,18 @@ const preferences: OnboardingPreferences = {
 };
 
 describe("account-scoped preference storage", () => {
+	it("defaults new preferences to Uniswap with local ranking", () => {
+		const parsed = personalizationPreferencesSchema.parse({
+			cadence: "weekly",
+			ticketSizeUsd: 10,
+			riskMode: "balanced",
+			assetClasses: ["CRYPTO", "STOCK_TOKEN"],
+		});
+
+		expect(parsed.executionProvider).toBe("UNISWAP");
+		expect(parsed.feedRankingProvider).toBe("DETERMINISTIC");
+	});
+
 	it("keeps preferences isolated by Privy user id", () => {
 		const storage = new MemoryStorage();
 		writeAccountPreferences("did:privy:alice", preferences, storage);

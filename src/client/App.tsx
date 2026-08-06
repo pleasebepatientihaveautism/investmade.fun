@@ -480,7 +480,7 @@ export function App({ config }: { config: PublicConfig }) {
 			}
 			const robinhoodProvider: "ZERO_EX" | "UNISWAP" =
 				preferences.activeChain === "SOLANA"
-					? (preferences.robinhoodExecutionProvider ?? "ZERO_EX")
+					? (preferences.robinhoodExecutionProvider ?? "UNISWAP")
 					: preferences.executionProvider === "UNISWAP"
 						? "UNISWAP"
 						: "ZERO_EX";
