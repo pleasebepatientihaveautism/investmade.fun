@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from "react";
 import { preload } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { Analytics } from "@vercel/analytics/react";
 import { PrivyProvider } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { SmartWalletsProvider } from "@privy-io/react-auth/smart-wallets";
@@ -119,5 +120,6 @@ if (!root) throw new Error("Root element is missing");
 createRoot(root).render(
   <StrictMode>
     <Root />
+    <Analytics />
   </StrictMode>
 );
