@@ -129,6 +129,46 @@ const onboardingPreferences = {
 } satisfies OnboardingPreferences;
 
 describe("core API flow", () => {
+	it("binds Solana preferences to the authenticated wallet", async () => {
+		const wallet = "ENskeWSdXAfqZaDAn3xv7X8CdE88Bb3WQreWGAuk9oyh";
+		const provider = new DemoProvider("JUPITER");
+		const app = createApp({
+			config: loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "false",
+				PUBLIC_ORIGIN: "http://localhost:5173",
+				SESSION_SECRET: "test-secret-that-is-at-least-32-characters",
+				PRIVY_APP_ID: "test-privy-app-id",
+				PRIVY_APP_SECRET: "test-privy-app-secret",
+				DATABASE_URL: "postgres://test:test@localhost/test",
+				COINGECKO_API_KEY: "test-coingecko-key",
+				ZG_ROUTER_API_KEY: "test-0g-key",
+				UNISWAP_API_KEY: "test-uniswap-key",
+				JUPITER_API_KEY: "test-jupiter-key",
+				SOLANA_RPC_URL: "https://solana.example.test",
+				SOLANA_WS_URL: "wss://solana.example.test",
+			}),
+			store: new MemoryStateStore(),
+			candidates: provider,
+			inference: provider,
+			execution: provider,
+			solanaExecutionProviders: { JUPITER: provider },
+			auth: { actor: async () => ({ wallet, txOrigin: wallet, chain: "SOLANA" }) },
+		});
+
+		await request(app)
+			.post("/api/preferences")
+			.set(authenticated)
+			.send({
+				...onboardingPreferences,
+				activeChain: "SOLANA",
+				executionProvider: "JUPITER",
+				solanaExecutionWallet: "So11111111111111111111111111111111111111112",
+			})
+			.expect(200)
+			.expect(({ body }) => expect(body.solanaExecutionWallet).toBe(wallet));
+	});
+
 	it("rejects a Solana basket before routing when USDC is insufficient", async () => {
 		const wallet = "ENskeWSdXAfqZaDAn3xv7X8CdE88Bb3WQreWGAuk9oyh";
 		const store = new MemoryStateStore();
