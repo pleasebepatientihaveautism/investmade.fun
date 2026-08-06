@@ -644,8 +644,7 @@ export function createApp(deps: AppDependencies) {
 			if (
 				preferences.activeChain !== response.locals.chain ||
 				(preferences.activeChain === "SOLANA" &&
-					(!["JUPITER", "ZERO_EX"].includes(preferences.executionProvider) ||
-						preferences.solanaExecutionWallet !== response.locals.wallet)) ||
+					!["JUPITER", "ZERO_EX"].includes(preferences.executionProvider)) ||
 				(preferences.activeChain === "ROBINHOOD" &&
 					preferences.executionProvider === "JUPITER")
 			) {
@@ -660,19 +659,23 @@ export function createApp(deps: AppDependencies) {
 				});
 				return;
 			}
+			const storedPreferences =
+				preferences.activeChain === "SOLANA"
+					? { ...preferences, solanaExecutionWallet: response.locals.wallet }
+					: preferences;
 			const ownerId = preferenceOwner(response);
 			const existing = await preferencesFor(response);
 			if (
 				existing &&
-				(existing.executionProvider !== preferences.executionProvider ||
-					existing.feedRankingProvider !== preferences.feedRankingProvider)
+				(existing.executionProvider !== storedPreferences.executionProvider ||
+					existing.feedRankingProvider !== storedPreferences.feedRankingProvider)
 			) {
 				await deps.store.invalidatePreparedExecutions(ownerId);
 			}
 			response.json(
 				await deps.store.setPreferences(
 					ownerId,
-					preferences,
+					storedPreferences,
 					response.locals.wallet,
 				),
 			);
