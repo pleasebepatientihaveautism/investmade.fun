@@ -7,32 +7,36 @@
 | Concern | Demo | Local live | Production |
 |---|---|---|---|
 | State | `MemoryStateStore` | `MemoryStateStore` | `PostgresStateStore` |
-| Candidates | `DemoProvider` | `LiveCandidateProvider` | `LiveCandidateProvider` |
-| Ranking | `ZeroGProvider` when configured, otherwise `DemoProvider` | `ZeroGProvider` when configured, otherwise `DemoProvider` | `ZeroGProvider` required by configuration |
-| Buy execution | `DemoProvider` | `ZeroExProvider` | `ZeroExProvider` |
+| Candidates | `DemoProvider` | Robinhood `LiveCandidateProvider`; Solana Jupiter or 0x provider | Same chain-specific providers |
+| Ranking | Account-selected `DeterministicRanker` or configured `ZeroGProvider` | Same | Same; production configuration requires 0G to be available |
+| Buy execution | `DemoProvider`, no broadcast | Robinhood 0x/Uniswap; Solana Jupiter/0x | Same chain-specific providers |
 | Icons | CoinGecko provider with local fallback behavior | Same | Same |
 | Card prices and history | CoinGecko with demo fallback | CoinGecko | CoinGecko |
+| Portfolio index | Alchemy when an Alchemy RPC URL is configured | Same | Same |
 
 ```mermaid
 flowchart LR
   U["User"] --> P["Privy login"]
-  P --> E["Embedded signer"]
-  E --> W["Investmade ERC-4337 wallet"]
-  W --> A["Privy access token plus wallet address"]
-  A --> S["Cadence session"]
-  S --> R["Canonical asset registry"]
-  R --> C["Contract and Robinhood market checks"]
-  C --> M["Batched CoinGecko market data"]
-  M --> Z["0G or local bounded ranking"]
+  P --> CH["Chain and execution wallet"]
+  CH -->|"Robinhood"| EVM["Embedded signer plus ERC-4337 wallet"]
+  CH -->|"Solana"| SVM["Connected Solana wallet"]
+  EVM --> A["Authenticated cadence session"]
+  SVM --> A
+  A --> C["Chain-specific candidate discovery"]
+  C --> M["Market metadata enrichment"]
+  M --> Z["Deterministic or 0G ranking"]
   Z --> D["Deterministic feed policy"]
   D --> UI["Cards and basket review"]
-  UI --> F["Fresh quotes and wallet calls"]
+  UI --> F["Fresh quotes and prepared plan"]
   F --> B["Browser plan-hash check"]
-  B --> PF["Full ERC-4337 preflight"]
-  PF --> W
-  W -->|"one atomic buy confirmation"| RH["Robinhood Chain"]
-  RH --> X["Receipt and transfer reconciliation"]
+  B --> EP["ERC-4337 call-array preflight"]
+  B --> SP["Solana transaction simulation"]
+  EP --> RH["Robinhood Chain atomic operation"]
+  SP --> SOL["Solana atomic transaction"]
+  RH --> X["Receipt transfer reconciliation"]
+  SOL --> X2["Signature and token-delta reconciliation"]
   X --> ST["PostgreSQL or memory store"]
+  X2 --> ST
 ```
 
 ## Client state model
@@ -42,6 +46,7 @@ flowchart LR
 - `stage`: onboarding, loading, swipe, or review.
 - `view`: Basket, Portfolio, Activity, or Account.
 - active cadence session and feed.
+- active chain, execution provider, ranking provider, and chain-specific wallet.
 - current card index and selected asset IDs.
 - latest prepared/submitted/terminal execution.
 - receipt candidate snapshot and feed pagination state.
@@ -53,29 +58,39 @@ Authentication loss resets product state to onboarding. Saved onboarding prefere
 The Express API exposes:
 
 - `GET /api/health` and `GET /api/config`
-- public asset icon/history reads
-- USDG balance reads
+- public asset icon, details, and history reads
+- Robinhood USDG and Solana SOL/USDC balance reads
+- Alchemy-backed Robinhood and Solana portfolio reads
+- an allowlisted Solana RPC proxy used by the browser wallet stack
 - cadence session open
 - feed generation
 - execution prepare, demo settle, submitted marker, reconciliation, and execution read
-- position exit quote preparation
+- chain-specific position exit quote preparation, plus Solana exit submit/status routes
 
-Production and local-live requests use Privy bearer authentication. The server verifies the access token and confirms that the requested smart-wallet address is linked to the Privy user. Pure demo execution substitutes a fixed demo wallet and does not accept that behavior as production evidence.
+Production and local-live requests use Privy bearer authentication. The server verifies the access token, selected chain, and that the requested EVM smart wallet or Solana wallet belongs to the Privy user. Pure demo execution substitutes fixed demo identities and does not accept that behavior as production evidence.
 
 ## Candidate discovery
 
-The live candidate provider starts with `ASSET_REGISTRY`, applies user exclusions and risk-mode community-asset rules, and discovers up to thirty candidates for ranking and ten cards per page.
+Robinhood ranking discovery combines the static registry, active Robinhood stock-token catalog, and bounded Uniswap pool discovery. Solana discovery comes from the selected Jupiter or 0x provider. Both apply user exclusions and risk-mode community-asset rules before returning up to thirty ranking candidates and ten cards per page.
 
-For every card it requires deployed contract code and CoinGecko market data. Stock-token cards also require:
+Feed browsing and execution preparation deliberately have different costs and guarantees:
+
+- The live Robinhood feed keeps CoinGecko-listed assets with safe icons but does not spend provider quotes or run the complete onchain execution preflight for every card.
+- Deterministic ranking alternates available crypto and stock-token results while preserving score order inside each group.
+- User-visible category tags are normalized and filtered by `src/domain/asset-tag-config.ts`; tag styling is metadata, not an execution guarantee.
+- Review re-resolves only the selected assets and performs the full provider and policy validation.
+
+For a selected Robinhood stock token, execution preparation requires:
 
 - active Robinhood asset/deployment metadata for chain `4663`;
+- deployed contract code;
 - a non-halted price record;
 - an unpaused onchain oracle;
-- exact-ticket 0x AllowanceHolder liquidity and token authorization.
+- fresh exact-input provider liquidity and token authorization.
 
-Feed generation requests a short-lived exact-ticket 0x `/price` check before displaying a card. Allowance and balance warnings are ignored at browsing time, while liquidity and token errors fail closed. Selected assets receive fresh executable `/quote` responses only in Review.
+Execution can reconstruct a provider-discovered Robinhood crypto asset from a canonical `rh:4663:<contract>` ID after a discovery-cache restart. Solana providers similarly recover supported assets from their mint ID. The policy still rejects malformed or invented identities.
 
-Production rejects stale Robinhood price evidence. Local-live accepts an active, non-halted stock token during off-hours even when the price timestamp is stale, and labels the environment as local-live.
+Production rejects stale Robinhood price evidence during execution preparation. Local-live accepts an active, non-halted stock token during off-hours even when the price timestamp is stale, and labels the environment as local-live.
 
 There is no separate stock-eligibility provider in the current runtime.
 
@@ -89,9 +104,11 @@ The ranking provider receives a bounded, committed input containing:
 - only candidates that passed discovery;
 - an input commitment.
 
-Production requires 0G. The returned output must match the input commitment, policy version, candidate set, unique asset constraint, ranking bounds, and period budget. The model cannot introduce token addresses, change amounts, or produce wallet calldata.
+Production configuration requires the 0G provider to be available, while the saved account preference can select either verified 0G or deterministic ranking. Any returned output must match the requested provider, input commitment, policy version, candidate set, unique asset constraint, ranking bounds, and period budget. Neither provider can introduce token addresses, change amounts, or produce wallet calldata.
 
 ## Atomic buy execution
+
+### Robinhood Chain
 
 `POST /api/executions/prepare`:
 
@@ -113,21 +130,36 @@ The backend accepts the submitted buy hash only with `batched: true`. Reconcilia
 
 The current atomic path should normally produce `SETTLED` or `FAILED`. `PARTIAL` remains in the execution/receipt model for older or non-atomic records.
 
+### Solana
+
+`POST /api/executions/prepare` follows the same session, selection, plan-hash, and quote-freshness boundary, then:
+
+1. Reads the signing wallet's USDC balance and rejects insufficient funds before provider candidate work.
+2. Requests exact-input Jupiter or 0x instructions for the selected mints.
+3. Composes one versioned transaction, simulates the complete message, rejects unexpected signers or an oversized packet, and stores its message commitment and expected balance changes.
+4. Accepts only a signed transaction matching that prepared message.
+5. Submits one signature and polls it to a terminal RPC state.
+6. Reconciles every expected token delta; native SOL output is separated from token-account rent changes.
+
+Provider rate limits and one transient build or route-specific simulation failure receive bounded retries. Explicit insufficient-funds errors are terminal for that preparation attempt.
+
 ## Exit execution
 
 Exits are intentionally separate from the cadence buy state:
 
-1. The server prepares a fresh reverse 0x quote for one supported position.
-2. The browser submits returned wallet calls sequentially through the connected wallet.
-3. Each receipt must succeed before the next call is sent.
+1. The server prepares a fresh reverse quote for one supported position through the active chain/provider.
+2. A Robinhood single-position exit preflights and submits its complete call array as one smart-wallet operation.
+3. Robinhood **Exit all positions** prepares all current holdings in parallel, excludes holdings without a current route, then preflights and submits every remaining call in one atomic smart-wallet operation.
+4. A Solana exit signs one prepared versioned transaction, submits it through the active provider, and polls its signature until `SETTLED` or `FAILED`.
 
-“Exit all” repeats this flow for each holding. It is not atomic across assets and can stop after a failure.
+Multi-position Solana exit is intentionally unavailable. The Robinhood UI currently clears a submitted exit after the smart-wallet send promise resolves, but that acknowledgement is not independent settlement proof. Receipt and post-exit balance verification therefore remain mandatory release evidence.
 
 ## Trust boundaries
 
 - Provider secrets and database credentials are server-only.
 - 0G receives bounded preferences/candidates, never keys, signatures, or wallet secrets.
 - 0x responses are treated as untrusted route material until actor, chain, token pair, calldata, amounts, expiry, simulation, balance, and price-impact policy are validated.
+- Jupiter and 0x Solana instructions are treated as untrusted until account keys, signers, input mint, amounts, message size, simulation, and message commitment are validated.
 - The approval spender comes only from `issues.allowance.spender` or `allowanceTarget`; the Settler transaction target is never approved.
 - The server has no user signing key and cannot broadcast a buy without the wallet.
 - A quote, HTTP success, signing request, or transaction hash is not settlement.
@@ -138,7 +170,7 @@ Production PostgreSQL enforces:
 
 - a unique `(wallet, epoch_id)` cadence session;
 - one reserved execution per session;
-- prepared quote refresh only for the same authorized basket hash;
+- atomic replacement of an unsigned `PREPARED` plan when the visible basket changes, guarded by the previous authorized plan hash;
 - no return from submitted/terminal status to prepared.
 
 Demo and local-live use nonce-suffixed cadence epochs so developers can create repeatable baskets without changing production idempotency.

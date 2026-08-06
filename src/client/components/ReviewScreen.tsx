@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import {
-	useSignTransaction,
 	type ConnectedStandardSolanaWallet,
+	useSignTransaction,
 } from "@privy-io/react-auth/solana";
-import { formatUnits, type Address, type Hex } from "viem";
+import { LoaderCircle, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Address, formatUnits, type Hex } from "viem";
 import type { Candidate } from "../../domain/schemas";
 import { formatTicketSizeUsd } from "../../domain/schemas";
 import type {
@@ -13,7 +14,7 @@ import type {
 	WalletCall,
 	WeeklySession,
 } from "../api";
-import { api, ApiError } from "../api";
+import { ApiError, api } from "../api";
 import {
 	executionMatchesReviewBasket,
 	executionPlanHashMatchesReviewBasket,
@@ -75,6 +76,7 @@ export function ReviewScreen({
 	const [errorCode, setErrorCode] = useState("");
 	const [executionConflict, setExecutionConflict] = useState(false);
 	const [now, setNow] = useState(() => Date.now());
+	const [walletBalance, setWalletBalance] = useState<number>();
 	const autoPrepareStarted = useRef(false);
 	const preparationAttempt = useRef(0);
 	const total = Math.round(selected.length * ticketSizeUsd * 100) / 100;
@@ -115,6 +117,36 @@ export function ReviewScreen({
 		const timer = window.setInterval(() => setNow(Date.now()), 1_000);
 		return () => window.clearInterval(timer);
 	}, []);
+	useEffect(() => {
+		if (!wallet) {
+			setWalletBalance(undefined);
+			return;
+		}
+		let cancelled = false;
+		setWalletBalance(undefined);
+		const request =
+			activeChain === "SOLANA"
+				? api
+						.solanaBalance(wallet)
+						.then(({ usdcBalanceBaseUnits, usdcDecimals }) =>
+							Number(formatUnits(BigInt(usdcBalanceBaseUnits), usdcDecimals)),
+						)
+				: api
+						.usdgBalance(wallet)
+						.then(({ balanceBaseUnits, decimals }) =>
+							Number(formatUnits(BigInt(balanceBaseUnits), decimals)),
+						);
+		void request
+			.then((balance) => {
+				if (!cancelled) setWalletBalance(balance);
+			})
+			.catch(() => {
+				if (!cancelled) setWalletBalance(undefined);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeChain, wallet]);
 	const quoteExpiry = useMemo(() => {
 		const quotes =
 			activeRecord?.plan.quotes ?? selected.flatMap((item) => item.quote ?? []);
@@ -565,21 +597,33 @@ export function ReviewScreen({
 				</div>
 				<div className="ledger-totals">
 					<div>
-						<span>Total input</span>
+						<span>Wallet balance</span>
 						<strong>
-							{formatTicketSizeUsd(total)} {stableToken}
+							{walletBalance === undefined
+								? "—"
+								: formatTicketSizeUsd(walletBalance)}
 						</strong>
-						<small>to invest</small>
+						<small>
+							<b>{stableToken}</b>
+						</small>
+					</div>
+					<div>
+						<span>Total input</span>
+						<strong>{formatTicketSizeUsd(total)}</strong>
+						<small>
+							<b>{stableToken}</b> to invest
+						</small>
 					</div>
 					<div>
 						<span>Remainder</span>
 						<strong>
 							{formatTicketSizeUsd(
 								Math.round((periodLimitUsd - total) * 100) / 100,
-							)}{" "}
-							{stableToken}
+							)}
 						</strong>
-						<small>stays in your wallet</small>
+						<small>
+							<b>{stableToken}</b>
+						</small>
 					</div>
 				</div>
 			</section>
@@ -588,11 +632,6 @@ export function ReviewScreen({
 				<h2>Policy checks</h2>
 				{[
 					{
-						label: "Budget within limit",
-						value: `${formatTicketSizeUsd(total)} / ${formatTicketSizeUsd(periodLimitUsd)} ${stableToken}`,
-						ok: selected.length > 0,
-					},
-					{
 						label: "Assets eligible",
 						value: selected.length
 							? `${selected.length} / ${selected.length}`
@@ -600,12 +639,20 @@ export function ReviewScreen({
 						ok: selected.length > 0,
 					},
 					{
-						label:
-							activeChain === "SOLANA"
-								? "Solana · Mainnet"
-								: "Robinhood Chain · 4663",
-						value: "Connected",
-						ok: true,
+						label: quotesSafeToSign
+							? "Quotes fresh"
+							: quotesFresh
+								? "Quote nearly expired"
+								: "Preview expired",
+						value: quotesSafeToSign
+							? `${Math.ceil(quoteExpiry / 1000)}s`
+							: "Refresh required",
+						ok: quotesSafeToSign,
+					},
+					{
+						label: "Budget within limit",
+						value: `${formatTicketSizeUsd(total)} / ${formatTicketSizeUsd(periodLimitUsd)} ${stableToken}`,
+						ok: selected.length > 0,
 					},
 					{
 						label: "Execution provider",
@@ -615,6 +662,14 @@ export function ReviewScreen({
 								: session.executionProvider === "JUPITER"
 									? "Jupiter"
 									: "Uniswap",
+						ok: true,
+					},
+					{
+						label:
+							activeChain === "SOLANA"
+								? "Solana · Mainnet"
+								: "Robinhood Chain · 4663",
+						value: "Connected",
 						ok: true,
 					},
 					{
@@ -636,17 +691,6 @@ export function ReviewScreen({
 							? executionWalletReady
 							: !liveExecution,
 					},
-					{
-						label: quotesSafeToSign
-							? "Quotes fresh"
-							: quotesFresh
-								? "Quote nearly expired"
-								: "Preview expired",
-						value: quotesSafeToSign
-							? `${Math.ceil(quoteExpiry / 1000)}s`
-							: "Refresh required",
-						ok: quotesSafeToSign,
-					},
 				].map(({ label, value, ok }) => (
 					<div className="policy-row" key={label}>
 						<span
@@ -658,11 +702,31 @@ export function ReviewScreen({
 						<em>{value}</em>
 					</div>
 				))}
+				{hasExecutableTransaction || !liveExecution ? (
+					<div className="wallet-boundary">
+						<Shield />
+						{hasExecutableTransaction ? (
+							<p>
+								<b>One confirmation · all-or-nothing.</b>
+								<br />
+								The complete call set is simulated, signed once, and submitted
+								as one atomic basket.
+							</p>
+						) : (
+							<p>
+								<b>Demo only · no broadcast.</b>
+								<br />
+								This simulates basket confirmation and settlement without moving
+								funds.
+							</p>
+						)}
+					</div>
+				) : null}
 				<div className="proof-block">
 					<h3>
 						{feed.proof.teeVerified
 							? "0G Private Allocation Jury"
-							: "Private ranking demo"}
+							: "Personal feed ranking"}
 					</h3>
 					<p>
 						<span>Ranking model</span>
@@ -705,26 +769,6 @@ export function ReviewScreen({
 						</div>
 					) : null}
 				</div>
-				{hasExecutableTransaction || !liveExecution ? (
-					<div className="wallet-boundary">
-						<Shield />
-						{hasExecutableTransaction ? (
-							<p>
-								<b>One confirmation · all-or-nothing.</b>
-								<br />
-								The complete call set is simulated, signed once, and submitted as
-								one atomic basket.
-							</p>
-						) : (
-							<p>
-								<b>Demo only · no broadcast.</b>
-								<br />
-								This simulates basket confirmation and settlement without moving
-								funds.
-							</p>
-						)}
-					</div>
-				) : null}
 				{executionConflict ? (
 					<button
 						type="button"
@@ -757,8 +801,14 @@ export function ReviewScreen({
 								? "Refreshing…"
 								: errorCode === "INSUFFICIENT_SMART_WALLET_USDG"
 									? "Top up Investmade Wallet"
-									: "Refresh quotes & continue"}{" "}
-							<ArrowRight />
+									: "Refresh quotes"}{" "}
+							{loading ? (
+								<LoaderCircle className="button-spinner" />
+							) : errorCode === "INSUFFICIENT_SMART_WALLET_USDG" ? (
+								<ArrowRight />
+							) : (
+								<RotateCcw />
+							)}
 						</button>
 					) : (
 						<button
@@ -784,11 +834,19 @@ export function ReviewScreen({
 									: activeRecord.status === "SUBMITTED"
 										? "Check settlement receipt"
 										: !quotesSafeToSign
-											? "Refresh quotes & continue"
+											? "Refresh quotes"
 											: hasExecutableTransaction
 												? `Sign & invest ${formatTicketSizeUsd(total)} ${stableToken}`
 												: "Simulate wallet confirmation"}{" "}
-							<ArrowRight />
+							{loading ? (
+								<LoaderCircle className="button-spinner" />
+							) : activeRecord.status !== "SETTLED" &&
+								activeRecord.status !== "SUBMITTED" &&
+								!quotesSafeToSign ? (
+								<RotateCcw />
+							) : (
+								<ArrowRight />
+							)}
 						</button>
 					)}
 				</div>
@@ -905,7 +963,7 @@ function phaseLabel(
 ) {
 	if (phase === "refreshing") return "Refreshing quotes…";
 	if (phase === "simulating") return "Simulating full basket…";
-	if (phase === "signing") return "Waiting for signature…";
+	if (phase === "signing") return "Basket settlement";
 	if (phase === "settling") return "Verifying settlement…";
 	return "Working…";
 }

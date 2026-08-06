@@ -248,15 +248,26 @@ export class PostgresStateStore implements StateStore {
     }
   }
 
-  async refreshPreparedExecution(id: string, plan: ExecutionPlan): Promise<ExecutionRecord> {
+  async refreshPreparedExecution(
+    id: string,
+    expectedAuthorizedPlanHash: string,
+    plan: ExecutionPlan
+  ): Promise<ExecutionRecord> {
     const result = await this.pool.query<ExecutionRow>(
       `UPDATE executions
-       SET plan = $2::jsonb, updated_at = now()
+       SET plan = $2::jsonb,
+           authorized_plan_hash = $4,
+           updated_at = now()
        WHERE id = $1
          AND status = 'PREPARED'
          AND authorized_plan_hash = $3
        RETURNING plan, status, submission_mode, transaction_hashes, settled_outputs, settled_at`,
-      [id, JSON.stringify({ ...plan, executionId: id }), plan.authorizedPlanHash]
+      [
+        id,
+        JSON.stringify({ ...plan, executionId: id }),
+        expectedAuthorizedPlanHash,
+        plan.authorizedPlanHash
+      ]
     );
     if (!result.rows[0]) throw new Error("EPOCH_ALREADY_EXECUTED");
     return mapExecution(result.rows[0]);

@@ -3,7 +3,9 @@ if (!apiKey) throw new Error("ZERO_EX_API_KEY is required");
 
 const wallet = requiredAddress("ZERO_EX_VERIFY_WALLET");
 const txOrigin = requiredAddress("ZERO_EX_VERIFY_TX_ORIGIN");
-const sellAmount = process.env.ZERO_EX_VERIFY_USDG_AMOUNT ?? "10000000";
+// Match the app's minimum live basket slot ($0.10) so the readiness check does
+// not report a false balance failure for a wallet that can execute the flow.
+const sellAmount = process.env.ZERO_EX_VERIFY_USDG_AMOUNT ?? "100000";
 const preferredSymbols = (process.env.ZERO_EX_VERIFY_SYMBOLS ?? "")
 	.split(",")
 	.map((symbol) => symbol.trim().toUpperCase())

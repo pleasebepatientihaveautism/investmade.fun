@@ -48,7 +48,7 @@ function price(
 }
 
 describe("live Robinhood catalog", () => {
-	it("discovers active assets and uses only an exact provider quote for feed cards", async () => {
+	it("discovers active assets without spending provider quotes on feed cards", async () => {
 		const fetcher = vi.fn(async (input: string | URL | Request) => {
 			const url = String(input);
 			if (url.endsWith("/rhj/assets")) {
@@ -167,23 +167,16 @@ describe("live Robinhood catalog", () => {
 			contract: addresses.AAPL,
 			marketHealthy: true,
 			permissionAllowed: true,
-			marketDataSource: "0x",
 		});
 		expect(cards[0]).not.toHaveProperty("quote");
-		expect(cards[0]?.evidenceIds).toContain("zero_ex:quote-rh:4663:AAPL");
-		expect(priceCheck).toHaveBeenCalledWith(
-			wallet,
-			txOrigin,
-			expect.objectContaining({ assetId: "rh:4663:AAPL" }),
-			"2500000",
-			50,
-		);
+		expect(priceCheck).not.toHaveBeenCalled();
 		expect(getCode).not.toHaveBeenCalled();
 		expect(readContract).not.toHaveBeenCalled();
 	});
 
 	it("discovers and deduplicates Uniswap pool tokens without filtering thin pools", async () => {
 		const geckoCalls: string[] = [];
+		let geckoAvailable = true;
 		const poolResponse = (
 			dex: string,
 			pool: string,
@@ -257,6 +250,9 @@ describe("live Robinhood catalog", () => {
 			const url = String(input);
 			if (url.endsWith("/rhj/assets")) return Response.json({ assets: [] });
 			if (url.endsWith("/rhj/prices")) return Response.json({ quotes: [] });
+			if (url.includes("/pools") && !geckoAvailable) {
+				return new Response(null, { status: 503 });
+			}
 			if (url.includes("/uniswap-v2-robinhood/pools")) {
 				geckoCalls.push(url);
 				return poolResponse(
@@ -351,5 +347,42 @@ describe("live Robinhood catalog", () => {
 		expect(
 			ranking.filter((candidate) => candidate.symbol === "CASHCAT"),
 		).toHaveLength(1);
+
+		geckoAvailable = false;
+		const restartedProvider = new LiveCandidateProvider(
+			loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "true",
+				PRIVY_APP_ID: "test",
+				PRIVY_APP_SECRET: "test",
+			}),
+			{ id: "UNISWAP", label: "Uniswap", price: vi.fn() },
+			{
+				fetcher,
+				client: {
+					getCode: async () => "0x6000",
+					readContract: async ({ functionName }) =>
+						functionName === "symbol"
+							? "CASHCAT"
+							: functionName === "decimals"
+								? 18
+								: false,
+				},
+			},
+		);
+		const executionCandidates = await restartedProvider.getCandidatesForExecution(
+			wallet,
+			[`rh:4663:${addresses.CASHCAT.toLowerCase()}`],
+			"100000",
+			new Date(),
+			txOrigin,
+		);
+		expect(executionCandidates).toContainEqual(
+			expect.objectContaining({
+				symbol: "CASHCAT",
+				contract: addresses.CASHCAT.toLowerCase(),
+				eligible: true,
+			}),
+		);
 	});
 });

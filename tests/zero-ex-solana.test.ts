@@ -85,6 +85,22 @@ function providerFor(wallet: string, signer = wallet) {
 }
 
 describe("0x Solana execution", () => {
+	it("retries a rate-limited route before declaring the asset unavailable", async () => {
+		const wallet = Keypair.generate().publicKey.toBase58();
+		const { provider, fetcher } = providerFor(wallet);
+		fetcher.mockImplementationOnce(async () =>
+			new Response("rate limited", {
+				status: 429,
+				headers: { "retry-after": "0.001" },
+			}),
+		);
+
+		await expect(
+			provider.price(wallet, wallet, candidate(), "100000", 50),
+		).resolves.toMatchObject({ provider: "ZERO_EX", chain: "SOLANA" });
+		expect(fetcher).toHaveBeenCalledTimes(2);
+	});
+
 	it("uses 0x for exact feed eligibility while keeping discovery separate", async () => {
 		const wallet = Keypair.generate().publicKey.toBase58();
 		const { provider, fetcher } = providerFor(wallet);

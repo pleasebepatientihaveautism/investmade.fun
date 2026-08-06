@@ -5,6 +5,7 @@ import {
 	eligibleFeedCandidates,
 	PolicyError,
 	validateFeed,
+	validateExecutionAssets,
 	validateRanking,
 } from "../src/domain/policy.js";
 import {
@@ -86,6 +87,30 @@ describe("deterministic feed policy", () => {
 				now,
 			),
 		).toHaveLength(0);
+	});
+
+	it("accepts contract-address Robinhood candidates for execution", async () => {
+		const [base] = await new DemoProvider().getCandidates("0x0");
+		if (!base) throw new Error("Expected a demo candidate");
+		const contract = "0x020bfc650a365f8bb26819deaabf3e21291018b4";
+		const candidate = {
+			...base,
+			assetId: `rh:4663:${contract}`,
+			contract,
+			symbol: "CASHCAT",
+		};
+
+		expect(() =>
+			validateExecutionAssets(
+				{
+					periodLimitUsd: 100,
+					selections: [
+						{ assetId: candidate.assetId, amountInBaseUnits: "100000" },
+					],
+				} as never,
+				[candidate],
+			),
+		).not.toThrow();
 	});
 
 	it("rejects an invented asset returned by the model", async () => {

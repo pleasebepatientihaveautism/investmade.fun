@@ -309,6 +309,7 @@ export function Onboarding({
 		setDraft((current) => ({
 			...current,
 			activeChain: chain,
+			feedRankingProvider: defaultFeedRankingProvider(chain),
 			executionProvider:
 				chain === "SOLANA"
 					? "JUPITER"
@@ -999,7 +1000,8 @@ function toCompletedPreferences(
 					? "ZERO_EX"
 					: (draft.executionProvider ?? "ZERO_EX"),
 		activeChain: draft.activeChain,
-		feedRankingProvider: draft.feedRankingProvider ?? "ZERO_G",
+		feedRankingProvider:
+			draft.feedRankingProvider ?? defaultFeedRankingProvider(draft.activeChain),
 		cadence: draft.cadence,
 		periodLimitUsd: draft.periodLimitUsd,
 		ticketSizeUsd: draft.ticketSizeUsd,
@@ -1018,7 +1020,8 @@ function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 					? "ZERO_EX"
 					: (draft.executionProvider ?? "ZERO_EX"),
 		activeChain: draft.activeChain,
-		feedRankingProvider: draft.feedRankingProvider ?? "ZERO_G",
+		feedRankingProvider:
+			draft.feedRankingProvider ?? defaultFeedRankingProvider(draft.activeChain),
 		cadence: draft.cadence ?? "weekly",
 		periodLimitUsd: draft.periodLimitUsd ?? 100,
 		ticketSizeUsd: draft.ticketSizeUsd ?? 10,
@@ -1031,11 +1034,18 @@ function toPreviewPreferences(draft: PreferenceDraft): OnboardingPreferences {
 function emptyDraft(): PreferenceDraft {
 	return {
 		activeChain: "ROBINHOOD",
-		feedRankingProvider: "ZERO_G",
+		executionProvider: "ZERO_EX",
+		feedRankingProvider: "DETERMINISTIC",
 		customPeriodLimitInput: "",
 		customTicketInput: "",
 		riskDisclosureAccepted: false,
 	};
+}
+
+function defaultFeedRankingProvider(
+	chain: AppChain,
+): OnboardingPreferences["feedRankingProvider"] {
+	return chain === "ROBINHOOD" ? "DETERMINISTIC" : "ZERO_G";
 }
 
 function draftFromPreferences(

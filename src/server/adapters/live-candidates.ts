@@ -88,6 +88,42 @@ const oraclePausedAbi = [
 	},
 ] as const;
 
+const erc20MetadataAbi = [
+	{
+		type: "function",
+		name: "symbol",
+		stateMutability: "view",
+		inputs: [],
+		outputs: [{ type: "string" }],
+	},
+	{
+		type: "function",
+		name: "decimals",
+		stateMutability: "view",
+		inputs: [],
+		outputs: [{ type: "uint8" }],
+	},
+] as const;
+
+type CandidateClient = {
+	getCode: (input: {
+		address: `0x${string}`;
+	}) => Promise<string | undefined>;
+	readContract: (
+		input:
+			| {
+					address: `0x${string}`;
+					abi: typeof oraclePausedAbi;
+					functionName: "oraclePaused";
+			  }
+			| {
+					address: `0x${string}`;
+					abi: typeof erc20MetadataAbi;
+					functionName: "symbol" | "decimals";
+			  },
+	) => Promise<unknown>;
+};
+
 const FEED_CONCURRENCY = 2;
 const REGISTRY_CACHE_MS = 5 * 60_000;
 const CONTRACT_CODE_CACHE_MS = 10 * 60_000;
@@ -100,7 +136,7 @@ const ROBINHOOD_UNISWAP_DEXES = [
 ] as const;
 
 export class LiveCandidateProvider implements CandidateProvider {
-	private readonly client;
+	private readonly client: CandidateClient;
 	private readonly fetcher: typeof fetch;
 	private readonly cache = new Map<
 		string,
@@ -117,22 +153,15 @@ export class LiveCandidateProvider implements CandidateProvider {
 		>,
 		private readonly options: {
 			cryptoOnly?: boolean;
-			client?: {
-				getCode: (input: {
-					address: `0x${string}`;
-				}) => Promise<string | undefined>;
-				readContract: (input: {
-					address: `0x${string}`;
-					abi: typeof oraclePausedAbi;
-					functionName: "oraclePaused";
-				}) => Promise<boolean>;
-			};
+			client?: CandidateClient;
 			fetcher?: typeof fetch;
 		} = {},
 	) {
 		this.client =
 			options.client ??
-			createPublicClient({ transport: http(config.ROBINHOOD_RPC_URL) });
+			(createPublicClient({
+				transport: http(config.ROBINHOOD_RPC_URL),
+			}) as unknown as CandidateClient);
 		this.fetcher = options.fetcher ?? fetch;
 		this.coingeckoApiKey = config.COINGECKO_API_KEY;
 	}
@@ -282,7 +311,7 @@ export class LiveCandidateProvider implements CandidateProvider {
 			now,
 			limit,
 			catalog,
-			true,
+			false,
 			true,
 		);
 		return candidates.map(({ quote: _quote, ...candidate }) => candidate);
@@ -336,12 +365,19 @@ export class LiveCandidateProvider implements CandidateProvider {
 			this.robinhoodCatalog(),
 			this.uniswapAssets().catch(() => []),
 		]);
-		const requested = new Set(assetIds);
-		const assets = [
+		const byId = new Map(
+			[
 			...staticCryptoAssets(),
 			...catalog.assets,
 			...discovered.map(({ asset }) => asset),
-		].filter((asset) => requested.has(asset.assetId));
+			].map((asset) => [asset.assetId, asset]),
+		);
+		for (const assetId of assetIds) {
+			if (byId.has(assetId)) continue;
+			const asset = await this.addressAsset(assetId);
+			if (asset) byId.set(assetId, asset);
+		}
+		const assets = assetIds.flatMap((assetId) => byId.get(assetId) ?? []);
 		const candidates: Candidate[] = [];
 		for (const asset of assets) {
 			const candidate = await this.resolveCandidate(
@@ -356,6 +392,45 @@ export class LiveCandidateProvider implements CandidateProvider {
 			if (candidate) candidates.push(candidate);
 		}
 		return candidates;
+	}
+
+	private async addressAsset(assetId: string): Promise<RegistryAsset | undefined> {
+		const address = /^rh:4663:(0x[a-fA-F0-9]{40})$/.exec(assetId)?.[1];
+		if (!address) return;
+		try {
+			const [symbol, decimals] = await Promise.all([
+				this.client.readContract({
+					address: address as `0x${string}`,
+					abi: erc20MetadataAbi,
+					functionName: "symbol",
+				}),
+				this.client.readContract({
+					address: address as `0x${string}`,
+					abi: erc20MetadataAbi,
+					functionName: "decimals",
+				}),
+			]);
+			if (
+				typeof symbol !== "string" ||
+				!symbol.trim() ||
+				typeof decimals !== "number" ||
+				!Number.isInteger(decimals) ||
+				decimals < 0 ||
+				decimals > 255
+			) {
+				return;
+			}
+			return {
+				assetId,
+				symbol: symbol.trim(),
+				name: symbol.trim(),
+				kind: "CRYPTO",
+				address,
+				decimals,
+			};
+		} catch {
+			return;
+		}
 	}
 
 	private async resolvePage(

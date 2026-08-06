@@ -12,7 +12,7 @@ import {
   LogOut,
   Send,
   Settings,
-  WalletCards,
+  Wallet,
   X
 } from "lucide-react";
 import {
@@ -301,7 +301,7 @@ export function WalletMenu({
             className="wallet-menu-trigger"
             aria-label={`Open wallet menu for ${wallet}`}
           >
-            <WalletCards aria-hidden="true" />
+            <Wallet aria-hidden="true" />
             {shortAddress(wallet)}
             <ChevronDown className="wallet-menu-chevron" aria-hidden="true" />
           </button>

@@ -8,7 +8,7 @@ import express, {
 } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import { type Address, createPublicClient, http } from "viem";
+import { type Address, createPublicClient, formatUnits, http } from "viem";
 import { ZodError, z } from "zod";
 import { sha256 } from "../domain/canonical.js";
 import {
@@ -408,47 +408,19 @@ export function createApp(deps: AppDependencies) {
 			return;
 		}
 		const fetcher = deps.fetcher ?? fetch;
-		const [native, tokenAccounts] = await Promise.all([
+		const [native, usdcBalanceBaseUnits] = await Promise.all([
 			solanaRpc<{ value?: number }>(fetcher, deps.config.SOLANA_RPC_URL, {
 				id: 1,
 				method: "getBalance",
 				params: [address, { commitment: "confirmed" }],
 			}),
-			solanaRpc<{
-				value?: Array<{
-					account?: {
-						data?: {
-							parsed?: {
-								info?: { tokenAmount?: { amount?: string } };
-							};
-						};
-					};
-				}>;
-			}>(fetcher, deps.config.SOLANA_RPC_URL, {
-				id: 2,
-				method: "getTokenAccountsByOwner",
-				params: [
-					address,
-					{ mint: SOLANA_USDC_MINT },
-					{ encoding: "jsonParsed", commitment: "confirmed" },
-				],
-			}),
+			solanaUsdcBalance(fetcher, deps.config.SOLANA_RPC_URL, address),
 		]);
-		const usdcBalanceBaseUnits = (tokenAccounts.value ?? [])
-			.reduce(
-				(sum, account) =>
-					sum +
-					BigInt(
-						account.account?.data?.parsed?.info?.tokenAmount?.amount ?? "0",
-					),
-				0n,
-			)
-			.toString();
 		response.json({
 			cluster: SOLANA_CLUSTER,
 			address,
 			solBalanceLamports: String(native.value ?? 0),
-			usdcBalanceBaseUnits,
+			usdcBalanceBaseUnits: usdcBalanceBaseUnits.toString(),
 			usdcDecimals: SOLANA_USDC_DECIMALS,
 		});
 	});
@@ -518,6 +490,90 @@ export function createApp(deps: AppDependencies) {
 					};
 				})
 				.filter((token) => BigInt(token.balanceBaseUnits) > 0n),
+		});
+	});
+
+	app.get("/api/portfolio/:address/robinhood", async (request, response) => {
+		const address = addressSchema.parse(request.params.address);
+		const endpoint = alchemyPortfolioEndpoint(deps.config.ROBINHOOD_RPC_URL);
+		if (!endpoint) {
+			response.status(503).json({ error: "ALCHEMY_PORTFOLIO_UNAVAILABLE" });
+			return;
+		}
+		const fetcher = deps.fetcher ?? fetch;
+		const tokens: AlchemyPortfolioToken[] = [];
+		let pageKey: string | undefined;
+		for (let page = 0; page < 10; page += 1) {
+			const upstream = await fetcher(endpoint, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					addresses: [{ address, networks: ["robinhood-mainnet"] }],
+					withMetadata: true,
+					withPrices: true,
+					includeNativeTokens: false,
+					includeErc20Tokens: true,
+					...(pageKey ? { pageKey } : {}),
+				}),
+			});
+			if (!upstream.ok) {
+				response.status(upstream.status === 429 ? 429 : 502).json({
+					error:
+						upstream.status === 429
+							? "ALCHEMY_RATE_LIMITED"
+							: "ALCHEMY_PORTFOLIO_UNAVAILABLE",
+				});
+				return;
+			}
+			const payload = (await upstream.json()) as AlchemyPortfolioResponse;
+			tokens.push(...(payload.data?.tokens ?? []));
+			pageKey = payload.data?.pageKey || undefined;
+			if (!pageKey) break;
+		}
+		const discovered = await deps.candidates.getRankingCandidates(500, [], {
+			includeCommunity: true,
+		});
+		const supported = deps.marketData
+			? await deps.marketData
+					.enrichRankingCandidates(discovered)
+					.catch(() => discovered)
+			: discovered;
+		const knownByContract = new Map(
+			supported.flatMap((asset) =>
+				asset.contract ? [[asset.contract.toLowerCase(), asset] as const] : [],
+			),
+		);
+		response.json({
+			chainId: 4663,
+			address,
+			tokens: tokens.flatMap((token) => {
+				const contract = token.tokenAddress?.toLowerCase();
+				const known = contract ? knownByContract.get(contract) : undefined;
+				const balanceBaseUnits = hexBalanceToDecimal(token.tokenBalance);
+				if (!contract || !known || BigInt(balanceBaseUnits) <= 0n) return [];
+				const usdPrice = token.tokenPrices?.find(
+					(price) => price.currency.toLowerCase() === "usd",
+				);
+				return [
+					{
+						assetId: known.assetId,
+						contract,
+						symbol: known.symbol,
+						name: known.name,
+						kind: known.kind,
+						decimals: known.decimals ?? token.tokenMetadata?.decimals ?? 0,
+						balanceBaseUnits,
+						iconUrl: known.iconUrl ?? token.tokenMetadata?.logo ?? undefined,
+						priceUsd:
+							known.priceUsd ?? (usdPrice ? Number(usdPrice.value) : undefined),
+						priceUpdatedAt:
+							known.marketDataUpdatedAt ?? usdPrice?.lastUpdatedAt,
+						marketDataSource:
+							known.marketDataSource ?? (usdPrice ? "alchemy" : undefined),
+						coingeckoId: known.coingeckoId,
+					},
+				];
+			}),
 		});
 	});
 
@@ -761,6 +817,15 @@ export function createApp(deps: AppDependencies) {
 				rankingCandidates =
 					await deps.marketData.enrichRankingCandidates(rankingCandidates);
 			}
+			if (
+				deps.config.liveExecution &&
+				session.chain === "ROBINHOOD" &&
+				deps.marketData
+			) {
+				rankingCandidates = rankingCandidates.filter(
+					(candidate) => candidate.coingeckoId && candidate.iconUrl,
+				);
+			}
 			if (!rankingCandidates.length) {
 				response
 					.status(422)
@@ -946,6 +1011,7 @@ export function createApp(deps: AppDependencies) {
 			);
 			const requestedIntent = executionIntent(session, parsed);
 			const requestedPlanHash = sha256(requestedIntent);
+			let expectedPlanHash: string = requestedPlanHash;
 			if (session.executionId) {
 				const existing = await deps.store.getExecution(session.executionId);
 				if (!existing) {
@@ -965,16 +1031,7 @@ export function createApp(deps: AppDependencies) {
 					});
 					return;
 				}
-				if (existing.plan.authorizedPlanHash !== requestedPlanHash) {
-					response.status(409).json({
-						error: "EPOCH_ALREADY_EXECUTED",
-						message:
-							"Quotes were prepared for a different basket. Start another basket to change the selection.",
-						executionId: existing.plan.executionId,
-						status: existing.status,
-					});
-					return;
-				}
+				expectedPlanHash = existing.plan.authorizedPlanHash;
 			}
 			timing.mark("session");
 			if (deps.config.liveExecution && parsed.chain === "ROBINHOOD") {
@@ -1001,6 +1058,27 @@ export function createApp(deps: AppDependencies) {
 						error: "INSUFFICIENT_SMART_WALLET_USDG",
 						message:
 							"Fund your Investmade Wallet with enough USDG before refreshing quotes.",
+					});
+					return;
+				}
+			}
+			if (deps.config.liveExecution && parsed.chain === "SOLANA") {
+				if (!deps.config.SOLANA_RPC_URL) {
+					throw new Error("SOLANA_RPC_BALANCE_UNAVAILABLE");
+				}
+				const required = parsed.selections.reduce(
+					(sum, selection) => sum + BigInt(selection.amountInBaseUnits),
+					0n,
+				);
+				const available = await solanaUsdcBalance(
+					deps.fetcher ?? fetch,
+					deps.config.SOLANA_RPC_URL,
+					response.locals.wallet,
+				);
+				if (available < required) {
+					response.status(422).json({
+						error: "INSUFFICIENT_FUNDS",
+						message: `Basket requires ${formatUnits(required, SOLANA_USDC_DECIMALS)} USDC, but this wallet has ${formatUnits(available, SOLANA_USDC_DECIMALS)} USDC.`,
 					});
 					return;
 				}
@@ -1087,7 +1165,11 @@ export function createApp(deps: AppDependencies) {
 				generatedAt: new Date().toISOString(),
 			};
 			const execution = session.executionId
-				? await deps.store.refreshPreparedExecution(session.executionId, plan)
+				? await deps.store.refreshPreparedExecution(
+						session.executionId,
+						expectedPlanHash,
+						plan,
+					)
 				: await deps.store.reserveExecution(session.id, plan);
 			timing.mark("store");
 			timing.apply(response);
@@ -1864,6 +1946,36 @@ async function solanaRpc<T>(
 	return payload.result;
 }
 
+async function solanaUsdcBalance(
+	fetcher: typeof fetch,
+	rpcUrl: string,
+	address: string,
+) {
+	const tokenAccounts = await solanaRpc<{
+		value?: Array<{
+			account?: {
+				data?: {
+					parsed?: { info?: { tokenAmount?: { amount?: string } } };
+				};
+			};
+		}>;
+	}>(fetcher, rpcUrl, {
+		id: 2,
+		method: "getTokenAccountsByOwner",
+		params: [
+			address,
+			{ mint: SOLANA_USDC_MINT },
+			{ encoding: "jsonParsed", commitment: "confirmed" },
+		],
+	});
+	return (tokenAccounts.value ?? []).reduce(
+		(sum, account) =>
+			sum +
+			BigInt(account.account?.data?.parsed?.info?.tokenAmount?.amount ?? "0"),
+		0n,
+	);
+}
+
 function providerLabel(id: ExecutionProviderId) {
 	return id === "ZERO_EX" ? "0x" : id === "JUPITER" ? "Jupiter" : "Uniswap";
 }
@@ -1877,7 +1989,9 @@ function assetExplorerUrl(assetId: string, address: string) {
 
 function publicProviderError(error: ExecutionProviderError) {
 	if (error.code === "PROVIDER_UNAVAILABLE") {
-		return `${providerLabel(error.provider)} is not configured.`;
+		return error.message === `${error.provider}_PROVIDER_UNAVAILABLE`
+			? `${providerLabel(error.provider)} is not configured.`
+			: `${providerLabel(error.provider)} is temporarily unavailable.`;
 	}
 	if (error.code === "TOKEN_UNAUTHORIZED") {
 		return `This token is not currently supported by ${providerLabel(error.provider)}.`;
@@ -1889,6 +2003,7 @@ function publicProviderError(error: ExecutionProviderError) {
 		return `${providerLabel(error.provider)} does not support the selected chain.`;
 	}
 	if (error.code === "BASKET_TOO_LARGE") return error.message;
+	if (error.code === "INSUFFICIENT_FUNDS") return error.message;
 	if (error.code === "SIMULATION_FAILED") {
 		return "The complete Solana basket did not simulate successfully.";
 	}
@@ -2012,7 +2127,7 @@ function alchemyPortfolioEndpoint(rpcUrl?: string) {
 		if (!parsed.hostname.endsWith("alchemy.com")) return undefined;
 		const apiKey = parsed.pathname.split("/").filter(Boolean).at(-1);
 		return apiKey
-			? `https://api.g.alchemy.com/data/v1/${apiKey}/assets/tokens/by-address`
+			? `https://api.g.alchemy.com/data/v1/${apiKey}/assets/tokens/balances/by-address`
 			: undefined;
 	} catch {
 		return undefined;

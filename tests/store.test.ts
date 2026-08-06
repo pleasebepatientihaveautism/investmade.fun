@@ -134,6 +134,37 @@ describe("weekly session idempotency", () => {
     ).rejects.toThrow("EPOCH_ALREADY_EXECUTED");
   });
 
+  it("atomically replaces an unsigned prepared plan", async () => {
+    const store = new MemoryStateStore();
+    const session = await store.openSession("0xabc", "2026-W30");
+    const current = { ...plan, sessionId: session.id };
+    await store.reserveExecution(session.id, current);
+
+    const replacement = {
+      ...current,
+      authorizedPlanHash: `sha256:${"c".repeat(64)}`,
+      totalInputBaseUnits: "20000000"
+    };
+    const refreshed = await store.refreshPreparedExecution(
+      current.executionId,
+      current.authorizedPlanHash,
+      replacement
+    );
+
+    expect(refreshed.plan).toMatchObject({
+      executionId: current.executionId,
+      authorizedPlanHash: replacement.authorizedPlanHash,
+      totalInputBaseUnits: "20000000"
+    });
+    await expect(
+      store.refreshPreparedExecution(
+        current.executionId,
+        current.authorizedPlanHash,
+        current
+      )
+    ).rejects.toThrow("EPOCH_ALREADY_EXECUTED");
+  });
+
   it("persists terminal output evidence with the execution", async () => {
     const store = new MemoryStateStore();
     const session = await store.openSession("0xabc", "2026-W30");

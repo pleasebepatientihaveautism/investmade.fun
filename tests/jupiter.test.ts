@@ -9,7 +9,12 @@ import { JupiterProvider } from "../src/server/adapters/jupiter.js";
 const memoProgram = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 const blockhash = "11111111111111111111111111111111";
 
-function providerFor(wallet: string, unexpectedSigner?: string, instructionBytes = 0) {
+function providerFor(
+	wallet: string,
+	unexpectedSigner?: string,
+	instructionBytes = 0,
+	simulationErrors: unknown[] = [null],
+) {
 	const fetcher = vi.fn(async (input: string | URL | Request) => {
 		const url = String(input);
 		if (url.includes("/tokens/v2/search")) {
@@ -63,19 +68,27 @@ function providerFor(wallet: string, unexpectedSigner?: string, instructionBytes
 		"https://api.mainnet-beta.solana.com",
 		fetcher as typeof fetch,
 	);
+	let simulationIndex = 0;
+	const simulateTransaction = vi.fn(async () => ({
+		value: {
+			err:
+				simulationErrors[
+					Math.min(simulationIndex++, simulationErrors.length - 1)
+				] ?? null,
+			unitsConsumed: 100_000,
+		},
+	}));
 	Object.assign(provider as object, {
 		connection: {
 			getLatestBlockhash: vi.fn(async () => ({
 				blockhash,
 				lastValidBlockHeight: 500,
 			})),
-			simulateTransaction: vi.fn(async () => ({
-				value: { err: null, unitsConsumed: 100_000 },
-			})),
+			simulateTransaction,
 			getBlockHeight: vi.fn(async () => 100),
 		},
 	});
-	return { provider, fetcher };
+	return { provider, fetcher, simulateTransaction };
 }
 
 async function candidatesFor(
@@ -230,6 +243,61 @@ describe("Jupiter atomic Solana execution", () => {
 		expect(buildAttempts).toBe(2);
 	});
 
+	it("retries one rejected Jupiter build", async () => {
+		const wallet = Keypair.generate().publicKey.toBase58();
+		const asset = SOLANA_ASSET_REGISTRY.SOL;
+		if (!asset) throw new Error("SOL_ASSET_REQUIRED");
+		let buildAttempts = 0;
+		const fetcher = vi.fn(async (input: string | URL | Request) => {
+			const url = String(input);
+			if (url.includes("/tokens/v2/search")) {
+				return Response.json([
+					{
+						id: asset.address,
+						name: asset.name,
+						symbol: asset.symbol,
+						decimals: asset.decimals,
+						isVerified: true,
+						organicScore: 99,
+						liquidity: 1_000_000,
+					},
+				]);
+			}
+			if (url.includes("/swap/v2/build")) {
+				buildAttempts += 1;
+				if (buildAttempts === 1) {
+					return new Response("Invalid state: base quantity out is zero", {
+						status: 400,
+					});
+				}
+				return Response.json({
+					outAmount: "1000000",
+					otherAmountThreshold: "990000",
+					swapInstruction: {
+						programId: memoProgram,
+						accounts: [],
+						data: "",
+					},
+				});
+			}
+			return new Response("not found", { status: 404 });
+		});
+		const provider = new JupiterProvider(
+			"test-jupiter-key",
+			"https://api.mainnet-beta.solana.com",
+			fetcher as typeof fetch,
+		);
+
+		const candidates = await provider.getCandidatesForExecution(
+			wallet,
+			[asset.assetId],
+			"100000",
+		);
+
+		expect(candidates).toHaveLength(1);
+		expect(buildAttempts).toBe(2);
+	});
+
 	it("reconstructs a discovered token from its mint after a provider restart", async () => {
 		const wallet = Keypair.generate().publicKey.toBase58();
 		const mint = Keypair.generate().publicKey.toBase58();
@@ -321,6 +389,75 @@ describe("Jupiter atomic Solana execution", () => {
 			).toHaveLength(count * 2);
 		},
 	);
+
+	it("reports Jupiter 6024 as insufficient funds without rerouting", async () => {
+		const wallet = Keypair.generate().publicKey.toBase58();
+		const { provider, simulateTransaction } = providerFor(
+			wallet,
+			undefined,
+			0,
+			[{ InstructionError: [1, { Custom: 6024 }] }],
+		);
+		const assetId = SOLANA_ASSET_REGISTRY.SOL?.assetId;
+		if (!assetId) throw new Error("SOL_ASSET_REQUIRED");
+		const candidates = await candidatesFor(provider, wallet, [assetId]);
+
+		await expect(
+			provider.prepareBasket(
+				wallet,
+				{
+					chain: "SOLANA",
+					cluster: "mainnet-beta",
+					inputToken: SOLANA_USDC_MINT,
+					sessionId: "insufficient-funds",
+					periodLimitUsd: 10,
+					selections: [{ assetId, amountInBaseUnits: "1000000" }],
+					slippageBps: 50,
+				},
+				candidates,
+			),
+		).rejects.toMatchObject({
+			code: "INSUFFICIENT_FUNDS",
+			message:
+				"This wallet has insufficient USDC or SOL for the basket amount, fees, or rent.",
+		});
+		expect(simulateTransaction).toHaveBeenCalledTimes(1);
+	});
+
+	it("rebuilds once after a route-specific simulation failure", async () => {
+		const wallet = Keypair.generate().publicKey.toBase58();
+		const { provider, fetcher, simulateTransaction } = providerFor(
+			wallet,
+			undefined,
+			0,
+			[{ InstructionError: [1, "ProgramFailedToComplete"] }, null],
+		);
+		const assetId = SOLANA_ASSET_REGISTRY.SOL?.assetId;
+		if (!assetId) throw new Error("SOL_ASSET_REQUIRED");
+		const candidates = await candidatesFor(provider, wallet, [assetId]);
+
+		const prepared = await provider.prepareBasket(
+			wallet,
+			{
+				chain: "SOLANA",
+				cluster: "mainnet-beta",
+				inputToken: SOLANA_USDC_MINT,
+				sessionId: "reroute-once",
+				periodLimitUsd: 10,
+				selections: [{ assetId, amountInBaseUnits: "1000000" }],
+				slippageBps: 50,
+			},
+			candidates,
+		);
+
+		expect(prepared.solanaTransaction.kind).toBe("SOLANA_TRANSACTION");
+		expect(simulateTransaction).toHaveBeenCalledTimes(2);
+		expect(
+			fetcher.mock.calls.filter(([url]) =>
+				String(url).includes("/swap/v2/build"),
+			),
+		).toHaveLength(3);
+	});
 
 	it("rejects a basket only when its compiled transaction is too large", async () => {
 		const wallet = Keypair.generate().publicKey.toBase58();

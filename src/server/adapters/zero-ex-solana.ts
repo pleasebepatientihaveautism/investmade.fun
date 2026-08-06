@@ -334,7 +334,7 @@ export class ZeroExSolanaProvider
 		if (!Number.isSafeInteger(numericAmountIn) || numericAmountIn <= 0) {
 			throw providerError("INVALID_TRANSACTION", "The 0x Solana input amount is outside the supported range.");
 		}
-		const response = await this.fetcher("https://api.0x.org/solana/swap-instructions", {
+		const request = {
 			method: "POST",
 			headers: { "0x-api-key": this.apiKey, "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -345,11 +345,25 @@ export class ZeroExSolanaProvider
 				slippage_bps: slippageBps,
 				reserve_transaction_bytes: 52,
 			}),
-		});
+		} satisfies RequestInit;
+		let response: Response | undefined;
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			response = await this.fetcher(
+				"https://api.0x.org/solana/swap-instructions",
+				request,
+			);
+			if (response.status !== 429 || attempt === 2) break;
+			await waitForZeroExRateLimit(response, attempt);
+		}
+		if (!response) {
+			throw providerError("PROVIDER_UNAVAILABLE", "0x Solana did not respond.");
+		}
 		if (!response.ok) {
 			const reason = await response.text().catch(() => "");
 			throw providerError(
-				"PROVIDER_UNAVAILABLE",
+				response.status === 429 || response.status >= 500
+					? "PROVIDER_UNAVAILABLE"
+					: "INSUFFICIENT_LIQUIDITY",
 				`0x Solana route unavailable${reason ? `: ${reason.slice(0, 160)}` : "."}`,
 			);
 		}
@@ -450,6 +464,14 @@ export class ZeroExSolanaProvider
 			})),
 		};
 	}
+}
+
+async function waitForZeroExRateLimit(response: Response, attempt: number) {
+	const retryAfter = Number(response.headers.get("retry-after"));
+	const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+		? Math.min(2_000, retryAfter * 1_000)
+		: 250 * 2 ** attempt;
+	await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function quoteFromBuild(

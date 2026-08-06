@@ -39,7 +39,7 @@ function testApp(
 	});
 }
 
-function testLocalLiveApp() {
+function testLocalLiveApp(marketData?: AppDependencies["marketData"]) {
 	const provider = new DemoProvider();
 	return createApp({
 		config: loadConfig({
@@ -56,6 +56,7 @@ function testLocalLiveApp() {
 		candidates: provider,
 		inference: provider,
 		execution: provider,
+		marketData,
 	});
 }
 
@@ -128,6 +129,100 @@ const onboardingPreferences = {
 } satisfies OnboardingPreferences;
 
 describe("core API flow", () => {
+	it("rejects a Solana basket before routing when USDC is insufficient", async () => {
+		const wallet = "ENskeWSdXAfqZaDAn3xv7X8CdE88Bb3WQreWGAuk9oyh";
+		const store = new MemoryStateStore();
+		const provider = new DemoProvider("JUPITER");
+		let candidatesRequested = false;
+		const candidateProvider = Object.assign(provider, {
+			async getCandidatesForExecution() {
+				candidatesRequested = true;
+				return [];
+			},
+		});
+		await store.setPreferences(wallet, {
+			activeChain: "SOLANA",
+			cadence: "weekly",
+			ticketSizeUsd: 0.1,
+			riskMode: "balanced",
+			assetClasses: ["CRYPTO"],
+			riskDisclosureAccepted: true,
+			executionProvider: "JUPITER",
+			feedRankingProvider: "ZERO_G",
+		});
+		const session = await store.openSession(
+			wallet,
+			"2026-W32",
+			"JUPITER",
+			"SOLANA",
+		);
+		const app = createApp({
+			config: loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "true",
+				LOCAL_LIVE_EXECUTION: "true",
+				PUBLIC_ORIGIN: "http://localhost:5173",
+				SESSION_SECRET: "test-secret-that-is-at-least-32-characters",
+				PRIVY_APP_ID: "test-privy-app-id",
+				PRIVY_APP_SECRET: "test-privy-app-secret",
+				ZERO_EX_API_KEY: "test-0x-key",
+				JUPITER_API_KEY: "test-jupiter-key",
+				SOLANA_RPC_URL: "https://solana.example.test",
+				SOLANA_WS_URL: "wss://solana.example.test",
+			}),
+			store,
+			candidates: candidateProvider,
+			solanaCandidateProviders: { JUPITER: candidateProvider },
+			inference: provider,
+			execution: provider,
+			solanaExecutionProviders: { JUPITER: provider },
+			auth: {
+				actor: async () => ({ wallet, txOrigin: wallet, chain: "SOLANA" }),
+			},
+			fetcher: async () =>
+				Response.json({
+					jsonrpc: "2.0",
+					result: {
+						value: [
+							{
+								account: {
+									data: {
+										parsed: {
+											info: { tokenAmount: { amount: "300000" } },
+										},
+									},
+								},
+							},
+						],
+					},
+				}),
+		});
+
+		await request(app)
+			.post("/api/executions/prepare")
+			.send({
+				sessionId: session.id,
+				chain: "SOLANA",
+				cluster: "mainnet-beta",
+				inputToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+				periodLimitUsd: 100,
+				selections: Array.from({ length: 5 }, (_, index) => ({
+					assetId: `sol:mainnet:asset-${index}`,
+					amountInBaseUnits: "100000",
+				})),
+				slippageBps: 50,
+			})
+			.expect(422)
+			.expect(({ body }) =>
+				expect(body).toEqual({
+					error: "INSUFFICIENT_FUNDS",
+					message:
+						"Basket requires 0.5 USDC, but this wallet has 0.3 USDC.",
+				}),
+			);
+		expect(candidatesRequested).toBe(false);
+	});
+
 	it("returns SOL and USDC balances from the configured server-side Solana RPC", async () => {
 		const provider = new DemoProvider();
 		const wallet = "ENskeWSdXAfqZaDAn3xv7X8CdE88Bb3WQreWGAuk9oyh";
@@ -255,6 +350,73 @@ describe("core API flow", () => {
 		);
 	});
 
+	it("returns supported Robinhood holdings from Alchemy", async () => {
+		const provider = new DemoProvider();
+		const wallet = "0x71f30000000000000000000000000000000009a2";
+		let requestedUrl = "";
+		let requestedBody: Record<string, unknown> = {};
+		const app = createApp({
+			config: loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "true",
+				PUBLIC_ORIGIN: "http://localhost:5173",
+				SESSION_SECRET: "test-secret-that-is-at-least-32-characters",
+				PRIVY_APP_ID: "test-privy-app-id",
+				PRIVY_APP_SECRET: "test-privy-app-secret",
+				ROBINHOOD_RPC_URL:
+					"https://robinhood-mainnet.g.alchemy.com/v2/test-key",
+			}),
+			store: new MemoryStateStore(),
+			candidates: provider,
+			inference: provider,
+			execution: provider,
+			fetcher: async (input, init) => {
+				requestedUrl = String(input);
+				requestedBody = JSON.parse(String(init?.body));
+				return Response.json({
+					data: {
+						tokens: [
+							{
+								tokenAddress: ASSET_REGISTRY.GME?.address,
+								tokenBalance: "0x0de0b6b3a7640000",
+								tokenMetadata: { logo: "https://example.com/gme.png" },
+								tokenPrices: [{ currency: "usd", value: "25" }],
+							},
+							{
+								tokenAddress: "0x0000000000000000000000000000000000000001",
+								tokenBalance: "0x1",
+							},
+						],
+					},
+				});
+			},
+		});
+
+		const response = await request(app)
+			.get(`/api/portfolio/${wallet}/robinhood`)
+			.expect(200);
+
+		expect(requestedUrl).toContain("/assets/tokens/balances/by-address");
+		expect(requestedBody).toMatchObject({
+			addresses: [{ address: wallet, networks: ["robinhood-mainnet"] }],
+			includeNativeTokens: false,
+			includeErc20Tokens: true,
+		});
+		expect(response.body).toMatchObject({
+			chainId: 4663,
+			address: wallet,
+			tokens: [
+				{
+					assetId: "rh:4663:GME",
+					symbol: "GME",
+					balanceBaseUnits: "1000000000000000000",
+					priceUsd: 25,
+					iconUrl: "https://example.com/gme.png",
+				},
+			],
+		});
+	});
+
 	it("prefetches one feed page ahead", () => {
 		expect(shouldPrefetchNextFeed(0, 10)).toBe(true);
 		expect(shouldPrefetchNextFeed(0, 20)).toBe(false);
@@ -284,6 +446,37 @@ describe("core API flow", () => {
 				slippageBps: 50,
 			})
 			.expect(401);
+	});
+
+	it("keeps only CoinGecko-listed Robinhood assets with logos in the live feed", async () => {
+		const app = testLocalLiveApp({
+			enrichRankingCandidates: async (candidates) =>
+				candidates.map((candidate, index) =>
+					index === 0
+						? {
+								...candidate,
+								coingeckoId: "listed-token",
+								iconUrl: "https://assets.coingecko.com/listed.png",
+							}
+						: candidate,
+				),
+			history: async () => ({ source: "coingecko", points: [] }),
+		});
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "weekly" })
+			.expect(200);
+		const feed = await request(app)
+			.post(`/api/sessions/${opened.body.id}/feed`)
+			.send(onboardingPreferences)
+			.expect(200);
+
+		expect(feed.body.candidates).toEqual([
+			expect.objectContaining({
+				coingeckoId: "listed-token",
+				iconUrl: "https://assets.coingecko.com/listed.png",
+			}),
+		]);
 	});
 
 	it("exposes only safe icon URLs, never the CoinGecko API key", async () => {
@@ -626,6 +819,53 @@ describe("core API flow", () => {
 		expect(nextPrepared.body.plan.executionId).not.toBe(
 			prepared.body.plan.executionId,
 		);
+	});
+
+	it("refreshes quotes after changing an unsigned basket selection", async () => {
+		const app = testApp();
+		const opened = await request(app)
+			.post("/api/sessions/open")
+			.send({ cadence: "weekly" })
+			.expect(200);
+		const feed = await request(app)
+			.post(`/api/sessions/${opened.body.id}/feed`)
+			.send(onboardingPreferences)
+			.expect(200);
+		const [firstAsset, secondAsset] = feed.body.candidates;
+		expect(firstAsset?.assetId).toBeTruthy();
+		expect(secondAsset?.assetId).toBeTruthy();
+		const requestBody = {
+			sessionId: opened.body.id,
+			chainId: 4663,
+			inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+			selections: [
+				{ assetId: firstAsset.assetId, amountInBaseUnits: "10000000" },
+			],
+			slippageBps: 50,
+		};
+		const initial = await request(app)
+			.post("/api/executions/prepare")
+			.send(requestBody)
+			.expect(200);
+		const refreshed = await request(app)
+			.post("/api/executions/prepare")
+			.send({
+				...requestBody,
+				selections: [
+					{ assetId: secondAsset.assetId, amountInBaseUnits: "10000000" },
+				],
+			})
+			.expect(200);
+
+		expect(refreshed.body.plan.executionId).toBe(
+			initial.body.plan.executionId,
+		);
+		expect(refreshed.body.plan.authorizedPlanHash).not.toBe(
+			initial.body.plan.authorizedPlanHash,
+		);
+		expect(refreshed.body.plan.quotes).toEqual([
+			expect.objectContaining({ assetId: secondAsset.assetId }),
+		]);
 	});
 
 	it("preserves an enriched CoinGecko icon on feed candidates", async () => {

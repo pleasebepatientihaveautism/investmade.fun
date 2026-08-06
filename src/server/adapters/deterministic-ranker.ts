@@ -21,13 +21,26 @@ export class DeterministicRanker implements FeedRankingProvider {
 					left.candidate.discoveryRank - right.candidate.discoveryRank ||
 					left.candidate.assetId.localeCompare(right.candidate.assetId),
 			);
+		const crypto = scored.filter(({ candidate }) => candidate.kind === "CRYPTO");
+		const stocks = scored.filter(
+			({ candidate }) => candidate.kind === "STOCK_TOKEN",
+		);
+		const groups =
+			Number.parseInt(input.inputCommitment.at(-1) ?? "0", 16) % 2
+				? [stocks, crypto]
+				: [crypto, stocks];
+		// ponytail: deterministic alternation; weighted mixing only if users ask for it.
+		const mixed = Array.from(
+			{ length: Math.max(crypto.length, stocks.length) },
+			(_, index) => groups.flatMap((group) => group[index] ?? []),
+		).flat();
 		const output: RankingOutput = {
 			schemaVersion: "investmade-ranking-output/v1",
 			sessionId: input.sessionId,
 			inputCommitment: input.inputCommitment,
 			policyVersion: input.policyVersion,
 			regime: marketRegime(input.candidates),
-			assets: scored.map(({ candidate, scoreBps }, index) => ({
+			assets: mixed.map(({ candidate, scoreBps }, index) => ({
 				assetId: candidate.assetId,
 				rank: index + 1,
 				scoreBps,

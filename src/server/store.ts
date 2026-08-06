@@ -67,7 +67,11 @@ export interface StateStore extends ProviderSnapshotCache {
   ): Promise<WeeklySession>;
   getSession(id: string): Promise<WeeklySession | undefined>;
   reserveExecution(sessionId: string, plan: ExecutionPlan): Promise<ExecutionRecord>;
-  refreshPreparedExecution(id: string, plan: ExecutionPlan): Promise<ExecutionRecord>;
+  refreshPreparedExecution(
+    id: string,
+    expectedAuthorizedPlanHash: string,
+    plan: ExecutionPlan
+  ): Promise<ExecutionRecord>;
   getExecution(id: string): Promise<ExecutionRecord | undefined>;
   updateExecution(
     id: string,
@@ -196,12 +200,16 @@ export class MemoryStateStore implements StateStore {
     return this.executions.get(id);
   }
 
-  async refreshPreparedExecution(id: string, plan: ExecutionPlan): Promise<ExecutionRecord> {
+  async refreshPreparedExecution(
+    id: string,
+    expectedAuthorizedPlanHash: string,
+    plan: ExecutionPlan
+  ): Promise<ExecutionRecord> {
     const existing = this.executions.get(id);
     if (!existing) throw new Error("EXECUTION_NOT_FOUND");
     if (
       existing.status !== "PREPARED" ||
-      existing.plan.authorizedPlanHash !== plan.authorizedPlanHash
+      existing.plan.authorizedPlanHash !== expectedAuthorizedPlanHash
     ) {
       throw new Error("EPOCH_ALREADY_EXECUTED");
     }

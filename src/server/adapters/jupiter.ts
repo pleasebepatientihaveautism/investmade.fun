@@ -255,6 +255,8 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 				? [12, 10, 8, 6, 4]
 				: [undefined, 24, 16, 12];
 		let lastRetryableError: ExecutionProviderError | undefined;
+		// ponytail: one fresh route retry; add DEX exclusions only if failures persist.
+		let retriedRouteFailure = false;
 		const smallestWorkingBuild = new Map<string, JupiterBuild>();
 		for (const maxAccounts of accountProfiles) {
 			const prepared: Array<{
@@ -319,14 +321,18 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 					solanaTransaction,
 				};
 			} catch (error) {
-				const retryable =
+				const retryableSize =
 					error instanceof ExecutionProviderError &&
-					(error.code === "BASKET_TOO_LARGE" ||
-						(error.code === "SIMULATION_FAILED" &&
-							error.upstreamReason?.includes('"Custom":6001')));
+					error.code === "BASKET_TOO_LARGE";
+				const retryableRoute =
+					error instanceof ExecutionProviderError &&
+					error.code === "SIMULATION_FAILED" &&
+					!retriedRouteFailure;
+				const retryable = retryableSize || retryableRoute;
 				if (!retryable) {
 					throw error;
 				}
+				if (retryableRoute) retriedRouteFailure = true;
 				lastRetryableError = error;
 			}
 		}
@@ -562,20 +568,39 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		});
 		if (maxAccounts) query.set("maxAccounts", String(maxAccounts));
 		let response: Response | undefined;
-		for (let attempt = 0; attempt < 3; attempt += 1) {
+		let responseReason: string | undefined;
+		let rateLimitRetries = 0;
+		// ponytail: one retry covers transient router state without hiding real errors.
+		let retriedRejectedBuild = false;
+		while (true) {
 			response = await this.fetcher(
 				`https://api.jup.ag/swap/v2/build?${query}`,
 				{ headers: this.headers() },
 			);
-			if (response.status !== 429 || attempt === 2) break;
-			await waitForJupiterRateLimit(response, attempt);
+			if (response.status === 429 && rateLimitRetries < 2) {
+				await waitForJupiterRateLimit(response, rateLimitRetries);
+				rateLimitRetries += 1;
+				continue;
+			}
+			if (!response.ok) responseReason = await safeText(response);
+			const retryRejectedBuild =
+				!response.ok &&
+				!retriedRejectedBuild &&
+				response.status >= 400 &&
+				response.status < 500 &&
+				![404, 422, 429].includes(response.status) &&
+				!isJupiterInsufficientFunds(responseReason ?? "");
+			if (!retryRejectedBuild) break;
+			retriedRejectedBuild = true;
 		}
 		if (!response) {
 			throw providerError("PROVIDER_UNAVAILABLE", "Jupiter did not respond.");
 		}
 		if (!response.ok) {
-			const reason = await safeText(response);
-			throw upstreamError(response.status, reason);
+			throw upstreamError(
+				response.status,
+				responseReason ?? (await safeText(response)),
+			);
 		}
 		const build = (await response.json()) as Partial<JupiterBuild>;
 		if (
@@ -729,10 +754,18 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 			{ sigVerify: false, replaceRecentBlockhash: false },
 		);
 		if (simulation.value.err) {
+			const reason = JSON.stringify(simulation.value.err);
+			if (isJupiterInsufficientFunds(reason)) {
+				throw providerError(
+					"INSUFFICIENT_FUNDS",
+					"This wallet has insufficient USDC or SOL for the basket amount, fees, or rent.",
+					reason,
+				);
+			}
 			throw providerError(
 				"SIMULATION_FAILED",
 				"Atomic Jupiter basket simulation failed.",
-				JSON.stringify(simulation.value.err),
+				reason,
 			);
 		}
 		const consumed = simulation.value.unitsConsumed ?? 1_400_000;
@@ -1178,6 +1211,10 @@ function toInstruction(instruction: JupiterInstruction) {
 
 function positiveInteger(value: unknown): value is string {
 	return typeof value === "string" && /^[0-9]+$/.test(value) && BigInt(value) > 0n;
+}
+
+function isJupiterInsufficientFunds(reason: string) {
+	return /"Custom"\s*:\s*6024|InsufficientFunds|0x1788/i.test(reason);
 }
 
 function upstreamError(status: number, reason: string) {

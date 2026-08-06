@@ -49,7 +49,7 @@ export function BudgetRail({
 			</div>
 			<div className="budget-meta">
 				<span className="quote-provider">
-					Execution quotes: <i aria-hidden="true" />{" "}
+					Quotes execution: <i aria-hidden="true" />{" "}
 					{executionProvider === "ZERO_EX"
 						? "0x"
 						: executionProvider === "JUPITER"

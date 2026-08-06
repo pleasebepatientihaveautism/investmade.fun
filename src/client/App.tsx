@@ -689,7 +689,7 @@ export function App({ config }: { config: PublicConfig }) {
 					<main className="swipe-page">
 						<section className="swipe-workspace">
 							<header className="page-heading">
-								<h1>Build your next basket</h1>
+								<h1>Build your basket</h1>
 								<p>Swipe right to add left to skip.</p>
 								{config.executionMode === "local-live" ? (
 									<p>

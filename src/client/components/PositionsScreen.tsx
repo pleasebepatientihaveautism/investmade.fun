@@ -1,24 +1,16 @@
-import { type EIP1193Provider, useWallets } from "@privy-io/react-auth";
+import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import {
-	useSignTransaction,
 	type ConnectedStandardSolanaWallet,
+	useSignTransaction,
 } from "@privy-io/react-auth/solana";
+import { FilePen, HandCoins, LoaderCircle, LogOut, X } from "lucide-react";
+import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
-import { encodeFunctionData, formatUnits } from "viem";
+import { type Address, formatUnits, type Hex } from "viem";
 import type { Candidate } from "../../domain/schemas";
 import { api, type ExitPreparation, type WalletCall } from "../api";
 import { AssetMark } from "./AssetMark";
-import { ArrowRight, Check } from "./Icons";
-
-const balanceOfAbi = [
-	{
-		type: "function",
-		name: "balanceOf",
-		stateMutability: "view",
-		inputs: [{ name: "account", type: "address" }],
-		outputs: [{ name: "", type: "uint256" }],
-	},
-] as const;
+import { Check } from "./Icons";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
 	style: "currency",
@@ -39,24 +31,27 @@ export function PositionsScreen({
 	activeChain: "ROBINHOOD" | "SOLANA";
 	solanaWallet?: ConnectedStandardSolanaWallet;
 }) {
-	const { wallets } = useWallets();
+	const { client: smartWalletClient, getClientForChain } = useSmartWallets();
 	const { signTransaction } = useSignTransaction();
-	const activeWallet = wallets.find((candidate) => candidate.linked);
 	const [balances, setBalances] = useState<Record<string, string>>({});
-	const [solanaPortfolio, setSolanaPortfolio] = useState<Candidate[]>([]);
+	const [indexedPortfolio, setIndexedPortfolio] = useState<Candidate[]>([]);
 	const [portfolioLoading, setPortfolioLoading] = useState(false);
 	const [prepared, setPrepared] = useState<Record<string, ExitPreparation>>({});
 	const [status, setStatus] = useState<Record<string, string>>({});
 	const [isExitingAll, setIsExitingAll] = useState(false);
+	const [exitAllOpen, setExitAllOpen] = useState(false);
 	const [error, setError] = useState("");
 
 	useEffect(() => {
 		if (demoMode || !wallet) return;
 		let cancelled = false;
+		setPortfolioLoading(true);
+		setError("");
+		setIndexedPortfolio([]);
+		setBalances({});
 		if (activeChain === "SOLANA") {
-			setPortfolioLoading(true);
-			setError("");
-			api.solanaPortfolio(wallet)
+			api
+				.solanaPortfolio(wallet)
 				.then((portfolio) => {
 					if (cancelled) return;
 					const knownByMint = new Map(
@@ -102,7 +97,7 @@ export function PositionsScreen({
 									evidenceIds: ["alchemy-portfolio"],
 								};
 					});
-					setSolanaPortfolio(assets);
+					setIndexedPortfolio(assets);
 					setBalances(
 						Object.fromEntries(
 							portfolio.tokens.map((token) => [
@@ -128,46 +123,76 @@ export function PositionsScreen({
 				cancelled = true;
 			};
 		}
-		setPortfolioLoading(false);
-		setSolanaPortfolio([]);
-		if (!activeWallet) return;
-		activeWallet
-			.getEthereumProvider()
-			.then((provider) =>
-				Promise.all(
-					candidates.map(async (candidate) => {
-						const data = encodeFunctionData({
-							abi: balanceOfAbi,
-							functionName: "balanceOf",
-							args: [wallet as `0x${string}`],
-						});
-						const value = (await provider.request({
-							method: "eth_call",
-							params: [{ to: candidate.contract, data }, "latest"],
-						})) as string;
-						return [candidate.assetId, BigInt(value).toString()] as const;
-					}),
-				),
-			)
-			.then((entries) => {
-				if (!cancelled) setBalances(Object.fromEntries(entries));
+		api
+			.robinhoodPortfolio(wallet)
+			.then((portfolio) => {
+				if (cancelled) return;
+				const knownByContract = new Map(
+					candidates.map((candidate) => [
+						candidate.contract.toLowerCase(),
+						candidate,
+					]),
+				);
+				const assets = portfolio.tokens.map((token): Candidate => {
+					const known = knownByContract.get(token.contract.toLowerCase());
+					return {
+						...(known ?? {
+							chain: "ROBINHOOD",
+							eligible: true,
+							marketHealthy: true,
+							permissionAllowed: true,
+							primaryClassification:
+								token.kind === "STOCK_TOKEN" ? "TOKENIZED_STOCK" : "CRYPTO",
+							classificationConfidence: "HIGH",
+							tags: [token.kind === "STOCK_TOKEN" ? "stock" : "crypto"],
+							riskFlags: [],
+							classificationEvidence: ["Alchemy wallet portfolio"],
+							crowdScoreBps: 0,
+							reason: "Detected in the connected wallet by Alchemy.",
+							evidenceIds: ["alchemy-portfolio"],
+						}),
+						assetId: token.assetId,
+						symbol: token.symbol,
+						name: token.name,
+						kind: token.kind,
+						contract: token.contract,
+						decimals: token.decimals,
+						coingeckoId: token.coingeckoId ?? known?.coingeckoId,
+						iconUrl: token.iconUrl ?? known?.iconUrl,
+						marketPriceUsd: token.priceUsd ?? known?.marketPriceUsd,
+						marketDataSource: token.marketDataSource ?? known?.marketDataSource,
+						marketDataUpdatedAt:
+							token.priceUpdatedAt ?? known?.marketDataUpdatedAt,
+					};
+				});
+				setIndexedPortfolio(assets);
+				setBalances(
+					Object.fromEntries(
+						portfolio.tokens.map((token) => [
+							token.assetId,
+							token.balanceBaseUnits,
+						]),
+					),
+				);
 			})
 			.catch((caught) => {
 				if (!cancelled) {
 					setError(
 						caught instanceof Error
 							? caught.message
-							: "Could not read wallet balances.",
+							: "Could not read Robinhood balances.",
 					);
 				}
+			})
+			.finally(() => {
+				if (!cancelled) setPortfolioLoading(false);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [activeChain, activeWallet, candidates, demoMode, wallet]);
+	}, [activeChain, candidates, demoMode, wallet]);
 
-	const positionCandidates =
-		activeChain === "SOLANA" ? solanaPortfolio : candidates;
+	const positionCandidates = indexedPortfolio;
 	const portfolioValueUsd = positionCandidates.reduce(
 		(total, candidate) =>
 			total +
@@ -208,13 +233,13 @@ export function PositionsScreen({
 			!exit ||
 			(activeChain === "SOLANA"
 				? !exit.solanaTransaction || !solanaWallet
-				: !exit.walletCalls?.length || !activeWallet)
+				: !exit.walletCalls?.length)
 		)
 			return;
 		setError("");
 		setStatus((current) => ({
 			...current,
-			[candidate.assetId]: "Confirm in wallet…",
+			[candidate.assetId]: "Settling transaction…",
 		}));
 		try {
 			if (activeChain === "SOLANA" && exit.solanaTransaction && solanaWallet) {
@@ -256,20 +281,24 @@ export function PositionsScreen({
 				setBalances((current) => ({ ...current, [candidate.assetId]: "0" }));
 				return;
 			}
-			if (!activeWallet || !exit.walletCalls) return;
-			await activeWallet.switchChain(4663);
-			const provider = await activeWallet.getEthereumProvider();
-			for (const call of exit.walletCalls) {
-				const hash = (await provider.request({
-					method: "eth_sendTransaction",
-					params: [walletTransaction(call)],
-				})) as string;
-				const receipt = (await waitForReceipt(provider, hash)) as {
-					status?: string;
-				};
-				if (receipt.status !== "0x1")
-					throw new Error("Exit transaction reverted.");
+			if (!exit.walletCalls) return;
+			const client =
+				smartWalletClient ?? (await getClientForChain({ id: 4663 }));
+			if (!client || client.account.address.toLowerCase() !== wallet.toLowerCase()) {
+				throw new Error("The active Privy smart wallet does not match this account.");
 			}
+			const calls = exit.walletCalls.map(smartWalletCall);
+			await client.prepareUserOperation({ calls });
+			await client.sendTransaction(
+				{ calls },
+				{
+					uiOptions: {
+						description: `Sell ${candidate.symbol} to USDG on Robinhood Chain.`,
+						buttonText: `Confirm ${candidate.symbol} sale`,
+						showWalletUIs: false,
+					},
+				},
+			);
 			setStatus((current) => ({
 				...current,
 				[candidate.assetId]: "Exit settled",
@@ -284,58 +313,110 @@ export function PositionsScreen({
 	}
 
 	async function exitAll() {
-		if (
-			activeChain === "SOLANA" ||
-			!activeWallet ||
-			!holdings.length ||
-			isExitingAll
-		)
+		if (activeChain === "SOLANA" || !holdings.length || isExitingAll)
 			return;
-		const accepted = window.confirm(
-			`Exit all ${holdings.length} holdings? Your wallet will ask you to approve and sign each required transaction.`,
-		);
-		if (!accepted) return;
 
 		setError("");
 		setIsExitingAll(true);
 		try {
-			await activeWallet.switchChain(4663);
-			const provider = await activeWallet.getEthereumProvider();
-			for (const candidate of holdings) {
-				const amount = balances[candidate.assetId] ?? "0";
-				setStatus((current) => ({
-					...current,
-					[candidate.assetId]: "Preparing fresh quote…",
-				}));
-				const exit = await api.prepareExit(candidate.assetId, amount);
-				if (!exit.walletCalls?.length) {
-					throw new Error(
-						`${candidate.symbol} returned no executable exit calls.`,
-					);
-				}
-				setPrepared((current) => ({ ...current, [candidate.assetId]: exit }));
-				setStatus((current) => ({
-					...current,
-					[candidate.assetId]: "Confirm in wallet…",
-				}));
-				for (const call of exit.walletCalls ?? []) {
-					const hash = (await provider.request({
-						method: "eth_sendTransaction",
-						params: [walletTransaction(call)],
-					})) as string;
-					const receipt = (await waitForReceipt(provider, hash)) as {
-						status?: string;
-					};
-					if (receipt.status !== "0x1")
-						throw new Error(`${candidate.symbol} exit reverted.`);
-				}
-				setStatus((current) => ({
-					...current,
-					[candidate.assetId]: "Exit settled",
-				}));
-				setBalances((current) => ({ ...current, [candidate.assetId]: "0" }));
+			const client =
+				smartWalletClient ?? (await getClientForChain({ id: 4663 }));
+			if (!client || client.account.address.toLowerCase() !== wallet.toLowerCase()) {
+				throw new Error("The active Privy smart wallet does not match this account.");
 			}
+			setStatus((current) => ({
+				...current,
+				...Object.fromEntries(
+					holdings.map((candidate) => [
+						candidate.assetId,
+						"Preparing fresh quote…",
+					]),
+				),
+			}));
+			const attempts = await Promise.allSettled(
+				holdings.map(async (candidate) => {
+					const amount = balances[candidate.assetId] ?? "0";
+					const preparation = await api.prepareExit(candidate.assetId, amount);
+					if (!preparation.walletCalls?.length) {
+						throw new Error("No executable exit calls.");
+					}
+					return { candidate, preparation };
+				}),
+			);
+			const exits = attempts.flatMap((attempt) =>
+				attempt.status === "fulfilled" ? [attempt.value] : [],
+			);
+			const skipped = holdings.filter(
+				(_, index) => attempts[index]?.status === "rejected",
+			);
+			if (!exits.length) {
+				throw new Error("No Robinhood holdings have an executable exit route right now.");
+			}
+			setPrepared((current) => ({
+				...current,
+				...Object.fromEntries(
+					exits.map(({ candidate, preparation }) => [
+						candidate.assetId,
+						preparation,
+					]),
+				),
+			}));
+			const calls = exits.flatMap(({ preparation }) =>
+				(preparation.walletCalls ?? []).map(smartWalletCall),
+			);
+			setStatus((current) => ({
+				...current,
+				...Object.fromEntries(
+					exits.map(({ candidate }) => [
+						candidate.assetId,
+						"Settling transaction…",
+					]),
+				),
+				...Object.fromEntries(
+					skipped.map((candidate) => [
+						candidate.assetId,
+						"No executable route",
+					]),
+				),
+			}));
+			await client.prepareUserOperation({ calls });
+			await client.sendTransaction(
+				{ calls },
+				{
+					uiOptions: {
+						description: `Sell ${exits.length} available holdings to USDG on Robinhood Chain. All submitted exits succeed or none.`,
+						buttonText: `Confirm ${exits.length} exits`,
+						showWalletUIs: false,
+					},
+				},
+			);
+			setStatus((current) => ({
+				...current,
+				...Object.fromEntries(
+					exits.map(({ candidate }) => [candidate.assetId, "Exit settled"]),
+				),
+			}));
+			setBalances((current) => ({
+				...current,
+				...Object.fromEntries(
+					exits.map(({ candidate }) => [candidate.assetId, "0"]),
+				),
+			}));
 		} catch (caught) {
+			setPrepared((current) =>
+				Object.fromEntries(
+					Object.entries(current).filter(
+						([assetId]) =>
+							!holdings.some((candidate) => candidate.assetId === assetId),
+					),
+				),
+			);
+			setStatus((current) => ({
+				...current,
+				...Object.fromEntries(
+					holdings.map((candidate) => [candidate.assetId, ""]),
+				),
+			}));
 			setError(
 				caught instanceof Error
 					? caught.message
@@ -354,60 +435,130 @@ export function PositionsScreen({
 					<p>
 						{activeChain === "SOLANA"
 							? "Live wallet balances from Alchemy. USD prices are shown when available."
-							: "Wallet value using current CoinGecko market prices."}
+							: "Live Alchemy balances with Robinhood market prices when available."}
 					</p>
 				</div>
-				{!demoMode && (
-					<button
-						type="button"
-						className="button button-primary exit-all-button"
-						disabled={
-							activeChain === "SOLANA" ||
-							!holdings.length ||
-							isExitingAll
-						}
-						onClick={exitAll}
-					>
-						{isExitingAll
-							? "Exiting…"
-							: activeChain === "SOLANA"
-								? "Exit individually"
-								: "Exit all"}
-					</button>
-				)}
 			</header>
 			<section className="portfolio-summary">
 				<div className="portfolio-summary-meta">
 					<span>Portfolio value</span>
-					<strong>{usdFormatter.format(portfolioValueUsd)}</strong>
+					<div className="portfolio-summary-value-row">
+						<strong>{usdFormatter.format(portfolioValueUsd)}</strong>
+						{!demoMode && (
+							<button
+								type="button"
+								className="button button-primary exit-all-button"
+								disabled={
+									activeChain === "SOLANA" ||
+									!holdings.length ||
+									isExitingAll
+								}
+								onClick={() => setExitAllOpen(true)}
+							>
+								{isExitingAll
+									? "Exiting…"
+									: activeChain === "SOLANA"
+										? "Exit individually"
+										: "Exit all positions"}
+								{!isExitingAll && activeChain !== "SOLANA" && (
+									<LogOut aria-hidden="true" />
+								)}
+							</button>
+						)}
+					</div>
 				</div>
 			</section>
-			<p className="positions-intro">
-				Exit supported assets with a fresh reverse quote from your selected
-				provider. Exits stay available outside your buy session.
-			</p>
+			<Dialog.Root open={exitAllOpen} onOpenChange={setExitAllOpen}>
+				<Dialog.Portal>
+					<Dialog.Overlay className="send-dialog-overlay" />
+					<Dialog.Content className="send-dialog-content exit-all-dialog">
+						<div className="send-dialog-header">
+							<div>
+								<Dialog.Title>Exit all holdings?</Dialog.Title>
+								<Dialog.Description>
+									All available exits will be submitted as one atomic
+									smart-wallet transaction.
+								</Dialog.Description>
+							</div>
+							<Dialog.Close asChild>
+								<button
+									type="button"
+									className="send-dialog-close"
+									aria-label="Close exit confirmation"
+								>
+									<X aria-hidden="true" />
+								</button>
+							</Dialog.Close>
+						</div>
+						<div className="send-dialog-actions">
+							<Dialog.Close asChild>
+								<button type="button" className="button button-outline">
+									Cancel
+								</button>
+							</Dialog.Close>
+							<button
+								type="button"
+								className="button button-primary"
+								onClick={() => {
+									setExitAllOpen(false);
+									void exitAll();
+								}}
+							>
+								Confirm exit all <LogOut aria-hidden="true" />
+							</button>
+						</div>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog.Root>
 			{demoMode ? (
 				<div className="positions-empty">
 					Demo mode does not invent wallet balances or settlement. Start live
 					mode with a funded wallet to prepare an exit.
 				</div>
 			) : portfolioLoading ? (
-				<div className="positions-empty">Loading wallet holdings…</div>
+				<div
+					className="positions-empty positions-loading"
+					role="status"
+					aria-live="polite"
+				>
+					<LoaderCircle aria-hidden="true" />
+					Loading wallet holdings…
+				</div>
 			) : (
 				<section className="positions-list">
 					{positionCandidates.map((candidate) => {
 						const rawBalance = balances[candidate.assetId] ?? "0";
 						const exit = prepared[candidate.assetId];
-						const settled = status[candidate.assetId] === "Exit settled";
+						const actionStatus = status[candidate.assetId] ?? "";
+						const settled = actionStatus === "Exit settled";
+						const quoteLoading = actionStatus === "Preparing fresh quote…";
+						const transactionSettling =
+							actionStatus === "Settling transaction…";
+						const actionBusy = quoteLoading || transactionSettling;
+						const actionLabel = settled
+							? `${candidate.symbol} exit settled`
+							: quoteLoading
+								? `Preparing ${candidate.symbol} quote`
+								: transactionSettling
+									? `Settling ${candidate.symbol} transaction`
+									: exit
+										? `Confirm ${candidate.symbol} sale`
+										: `Sell ${candidate.symbol}`;
 						const balance = formatPositionBalance(
 							BigInt(rawBalance),
 							candidate.decimals,
 						);
 						const rawUnitPrice =
 							candidate.marketPriceUsd ?? candidate.quote?.unitPriceUsd;
-						const unitPrice = rawUnitPrice
-							? `${usdFormatter.format(Number(rawUnitPrice))} each`
-							: "Price unavailable";
+							const holdingValue = rawUnitPrice !== undefined
+								? usdFormatter.format(
+										(Number(rawBalance) / 10 ** candidate.decimals) *
+											Number(rawUnitPrice),
+									)
+								: "Price unavailable";
+							const unitPrice = rawUnitPrice !== undefined
+								? usdFormatter.format(Number(rawUnitPrice))
+								: "Price unavailable";
 						return (
 							<article className="position-row" key={candidate.assetId}>
 								<AssetMark
@@ -415,41 +566,46 @@ export function PositionsScreen({
 									iconUrl={candidate.iconUrl}
 									size="sm"
 								/>
-								<div className="position-identity">
-									<b>{candidate.symbol}</b>
-									<small>{candidate.name}</small>
-								</div>
-								<div className="position-metrics">
-									<b>
-										{balance} {candidate.symbol}
-									</b>
-									<small>{unitPrice}</small>
+								<div className="position-copy">
+									<div className="position-primary">
+										<b>{candidate.name}</b>
+										<b>{holdingValue}</b>
+									</div>
+									<div className="position-secondary">
+										<small>{unitPrice}</small>
+										<small>
+											{balance} {candidate.symbol}
+										</small>
+									</div>
 								</div>
 								<button
 									type="button"
 									className="button button-sell"
-									disabled={BigInt(rawBalance) <= 0n || settled}
+									aria-label={actionLabel}
+									title={actionLabel}
+									disabled={BigInt(rawBalance) <= 0n || settled || actionBusy}
 									onClick={() =>
 										exit ? confirm(candidate) : prepare(candidate)
 									}
 								>
 									{settled ? (
-										<>
-											<Check /> Settled
-										</>
+										<Check aria-hidden="true" />
+									) : actionBusy ? (
+										<LoaderCircle
+											className="button-spinner"
+											aria-hidden="true"
+										/>
 									) : exit ? (
-										<>
-											Confirm sell <ArrowRight />
-										</>
+										<FilePen aria-hidden="true" />
 									) : (
-										"Get exit quote"
+										<HandCoins aria-hidden="true" />
 									)}
 								</button>
 								{exit && !settled && (
 									<small className="position-status">
 										{formatUnits(BigInt(exit.quote.minimumAmountOut), 6)}{" "}
-										{activeChain === "SOLANA" ? "USDC" : "USDG"}
-										minimum · fresh for 60 seconds
+										{activeChain === "SOLANA" ? "USDC" : "USDG"}{" "}
+										minimum · quote is active for 60 seconds
 									</small>
 								)}
 								{status[candidate.assetId] &&
@@ -487,44 +643,17 @@ function formatPositionBalance(value: bigint, decimals: number) {
 	return compactFraction ? `${whole}.${compactFraction}` : whole;
 }
 
-function walletTransaction(call: WalletCall) {
+function smartWalletCall(call: WalletCall): {
+	to: Address;
+	data: Hex;
+	value: bigint;
+} {
 	const { transaction } = call;
-	const hasEip1559Fees = Boolean(
-		transaction.maxFeePerGas && transaction.maxPriorityFeePerGas,
-	);
 	return {
-		from: transaction.from,
-		to: transaction.to,
-		data: transaction.data,
-		value: toHex(transaction.value),
-		...(hasEip1559Fees && transaction.maxFeePerGas
-			? { maxFeePerGas: toHex(transaction.maxFeePerGas) }
-			: {}),
-		...(hasEip1559Fees && transaction.maxPriorityFeePerGas
-			? { maxPriorityFeePerGas: toHex(transaction.maxPriorityFeePerGas) }
-			: {}),
-		...(!hasEip1559Fees && transaction.gasPrice
-			? { gasPrice: toHex(transaction.gasPrice) }
-			: {}),
+		to: transaction.to as Address,
+		data: transaction.data as Hex,
+		value: BigInt(transaction.value),
 	};
-}
-
-function toHex(value: string) {
-	return `0x${BigInt(value).toString(16)}`;
-}
-
-async function waitForReceipt(provider: EIP1193Provider, hash: string) {
-	for (let attempt = 0; attempt < 40; attempt += 1) {
-		const receipt = await provider.request({
-			method: "eth_getTransactionReceipt",
-			params: [hash],
-		});
-		if (receipt) return receipt;
-		await new Promise((resolve) => setTimeout(resolve, 1_500));
-	}
-	throw new Error(
-		"Exit transaction is still pending. Check your wallet before retrying.",
-	);
 }
 
 function base64ToBytes(value: string) {

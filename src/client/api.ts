@@ -1,10 +1,10 @@
 import type {
 	AppChain,
 	Candidate,
-	ExecutionProviderId,
 	ExecutionPlan,
-	FeedRankingProviderId,
+	ExecutionProviderId,
 	FeedOutput,
+	FeedRankingProviderId,
 	OnboardingPreferences,
 	Quote,
 } from "../domain/schemas.js";
@@ -171,6 +171,25 @@ export interface SolanaPortfolioResponse {
 	}>;
 }
 
+export interface RobinhoodPortfolioResponse {
+	chainId: 4663;
+	address: string;
+	tokens: Array<{
+		assetId: string;
+		contract: string;
+		symbol: string;
+		name: string;
+		kind: "CRYPTO" | "STOCK_TOKEN";
+		decimals: number;
+		balanceBaseUnits: string;
+		iconUrl?: string;
+		priceUsd?: number;
+		priceUpdatedAt?: string;
+		marketDataSource?: Candidate["marketDataSource"];
+		coingeckoId?: string;
+	}>;
+}
+
 let authProvider:
 	| {
 			getAccessToken: () => Promise<string | null>;
@@ -305,6 +324,10 @@ export const api = {
 	solanaPortfolio: (wallet: string) =>
 		request<SolanaPortfolioResponse>(
 			`/api/portfolio/${encodeURIComponent(wallet)}/solana`,
+		),
+	robinhoodPortfolio: (wallet: string) =>
+		request<RobinhoodPortfolioResponse>(
+			`/api/portfolio/${encodeURIComponent(wallet)}/robinhood`,
 		),
 	openSession: (
 		cadence: OnboardingPreferences["cadence"],

@@ -79,7 +79,11 @@ function hasCanonicalCandidateIdentity(candidate: Candidate): boolean {
 	if (checkedIn) {
 		return checkedIn.address.toLowerCase() === candidate.contract.toLowerCase();
 	}
-	return candidate.assetId === `rh:4663:${candidate.symbol}`;
+	return (
+		/^0x[a-fA-F0-9]{40}$/.test(candidate.contract) &&
+		candidate.assetId.toLowerCase() ===
+			`rh:4663:${candidate.contract.toLowerCase()}`
+	);
 }
 
 export function validateFeed(

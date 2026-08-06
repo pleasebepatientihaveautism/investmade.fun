@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CircleHelp } from "lucide-react";
+import { visibleAssetTags } from "../../domain/asset-tag-config";
 import type { Candidate } from "../../domain/schemas";
 import {
 	type AssetDetailsResponse,
@@ -28,15 +29,7 @@ import { AssetMark } from "./AssetMark";
 const SWIPE_THRESHOLD_PX = 72;
 const LOADING_DOTS = Array.from({ length: 32 }, (_, index) => index);
 const CHART_MORPH_DURATION_MS = 420;
-const CHAIN_ECOSYSTEM_LABELS: Record<string, string> = {
-	"Base Ecosystem": "Base",
-	"Ethereum Ecosystem": "Ethereum",
-	"Solana Ecosystem": "Solana",
-};
 type DecisionFeedback = "invest" | "skip";
-function categoryLabel(category: string) {
-	return CHAIN_ECOSYSTEM_LABELS[category] ?? category;
-}
 
 function shortDate(timestamp: number) {
 	return new Intl.DateTimeFormat("en-US", {
@@ -355,17 +348,6 @@ function PriceSparkline({
 					) : null}
 				</>
 			)}
-			{history && history.source !== "coingecko" ? (
-				<span className="chart-market-source">
-					{history.source === "nasdaq"
-						? "Underlying stock · Nasdaq"
-						: history.source === "yahoo"
-							? `Underlying market · Yahoo Finance · ${history.sourceAsset ?? candidate.symbol}`
-							: history.source === "demo"
-								? "Demo price path"
-								: "Market history unavailable"}
-				</span>
-			) : null}
 			<div className="chart-controls">
 				<fieldset
 					className="chart-timeframes"
@@ -444,12 +426,15 @@ function PriceSparkline({
 											24h rank #{candidate.providerVolumeRank} by volume
 										</span>
 									) : null}
-									{details.categories.map((category) => (
-										<span className="asset-tag" key={category}>
-											{categoryLabel(category)}
+									{visibleAssetTags(details.categories).map((tag) => (
+										<span
+											className={`asset-tag is-${tag.tone}`}
+											key={tag.source}
+										>
+											{tag.label}
 										</span>
 									))}
-									{!details.categories.length &&
+									{!visibleAssetTags(details.categories).length &&
 									!candidate.marketCapRank &&
 									!candidate.providerVolumeRank
 										? "Not listed"
