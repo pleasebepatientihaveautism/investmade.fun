@@ -67,6 +67,7 @@ export interface ExecutionRecord {
 		};
 	}>;
 	solanaTransaction?: NonNullable<ExecutionPlan["solanaTransaction"]>;
+	solanaTransactions?: NonNullable<ExecutionPlan["solanaTransactions"]>;
 }
 
 export type WalletCall = NonNullable<ExecutionRecord["walletCalls"]>[number];
@@ -95,14 +96,8 @@ export interface PublicConfig {
 			ZERO_EX: { available: boolean };
 		};
 	};
-	executionProviders: Record<
-		ExecutionProviderId,
-		{ available: boolean }
-	>;
-	feedRankingProviders: Record<
-		FeedRankingProviderId,
-		{ available: boolean }
-	>;
+	executionProviders: Record<ExecutionProviderId, { available: boolean }>;
+	feedRankingProviders: Record<FeedRankingProviderId, { available: boolean }>;
 	maxCards: number;
 	privy: { appId: string };
 }
@@ -299,6 +294,9 @@ function apiErrorMessage(code: string) {
 	if (code === "INVALID_REQUEST") {
 		return "Choose at least one eligible asset before continuing.";
 	}
+	if (code === "NO_ELIGIBLE_CANDIDATES_FOR_PREFERENCES") {
+		return "No executable assets matched your feed rules. Try again or adjust them in Account.";
+	}
 	return "The basket could not be prepared. Please try again.";
 }
 
@@ -368,14 +366,12 @@ export const api = {
 					? {
 							chain: "SOLANA",
 							cluster: "mainnet-beta",
-							inputToken:
-								"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+							inputToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
 						}
 					: {
 							chain: "ROBINHOOD",
 							chainId: 4663,
-							inputToken:
-								"0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+							inputToken: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
 						}),
 				periodLimitUsd,
 				selections: assetIds.map((assetId) => ({
@@ -398,10 +394,10 @@ export const api = {
 			method: "POST",
 			body: JSON.stringify({ transactionHashes, batched }),
 		}),
-	submitSolana: (executionId: string, signedTransaction: string) =>
+	submitSolana: (executionId: string, signedTransactions: string[]) =>
 		request<ExecutionRecord>(`/api/executions/${executionId}/submitted`, {
 			method: "POST",
-			body: JSON.stringify({ signedTransaction }),
+			body: JSON.stringify({ signedTransactions }),
 		}),
 	reconcile: (executionId: string) =>
 		request<ExecutionRecord>(`/api/executions/${executionId}/reconcile`, {
@@ -417,10 +413,7 @@ export const api = {
 				body: JSON.stringify({ amountInBaseUnits }),
 			},
 		),
-	submitSolanaExit: (
-		assetId: string,
-		signedTransaction: string,
-	) =>
+	submitSolanaExit: (assetId: string, signedTransaction: string) =>
 		request<{ signature: string; status: "SUBMITTED" }>(
 			`/api/positions/${encodeURIComponent(assetId)}/exit/submit`,
 			{

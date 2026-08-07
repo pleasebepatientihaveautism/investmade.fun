@@ -111,8 +111,13 @@ export function ReviewScreen({
 		executionMatchesReviewBasket(record, basket)
 			? record
 			: undefined;
-	const solanaTransaction =
+	const atomicSolanaTransaction =
 		activeRecord?.solanaTransaction ?? activeRecord?.plan.solanaTransaction;
+	const solanaTransactions =
+		activeRecord?.solanaTransactions ??
+		activeRecord?.plan.solanaTransactions ??
+		(atomicSolanaTransaction ? [atomicSolanaTransaction] : []);
+	const perLegSolana = Boolean(activeRecord?.plan.solanaTransactions);
 	useEffect(() => {
 		const timer = window.setInterval(() => setNow(Date.now()), 1_000);
 		return () => window.clearInterval(timer);
@@ -161,7 +166,7 @@ export function ReviewScreen({
 	const quotesSafeToSign = quoteExpiry > MIN_SIGNING_WINDOW_MS;
 	const hasExecutableTransaction = Boolean(
 		activeChain === "SOLANA"
-			? solanaTransaction
+			? solanaTransactions.length
 			: activeRecord?.walletCalls?.length,
 	);
 	const executionWalletReady =
@@ -356,7 +361,7 @@ export function ReviewScreen({
 		if (
 			activeRecord?.status !== "PREPARED" ||
 			(activeChain === "SOLANA"
-				? !solanaTransaction
+				? !solanaTransactions.length
 				: !activeRecord.walletCalls?.length) ||
 			!wallet ||
 			!selected.length
@@ -387,28 +392,37 @@ export function ReviewScreen({
 			setLoading(true);
 			setError("");
 			try {
-				const transaction = base64ToBytes(
-					solanaTransaction?.unsignedTransactionBase64 ?? "",
-				);
 				setPhase("signing");
-				const { signedTransaction } = await signTransaction({
-					transaction,
-					wallet: solanaWallet,
-					chain: "solana:mainnet",
-					options: {
-						uiOptions: {
-							showWalletUIs: false,
-							description: `Invest ${formatTicketSizeUsd(total)} USDC through Jupiter. Every swap succeeds or none do.`,
-							buttonText: `Sign & invest ${formatTicketSizeUsd(total)} USDC`,
+				const signedTransactions: string[] = [];
+				for (const [index, prepared] of solanaTransactions.entries()) {
+					const { signedTransaction } = await signTransaction({
+						transaction: base64ToBytes(prepared.unsignedTransactionBase64),
+						wallet: solanaWallet,
+						chain: "solana:mainnet",
+						options: {
+							uiOptions: {
+								showWalletUIs: false,
+								description: perLegSolana
+									? `Sign swap ${index + 1} of ${solanaTransactions.length}. Swaps settle independently.`
+									: `Invest ${formatTicketSizeUsd(total)} USDC through Jupiter. Every swap succeeds or none do.`,
+								buttonText: perLegSolana
+									? `Sign swap ${index + 1} of ${solanaTransactions.length}`
+									: `Sign & invest ${formatTicketSizeUsd(total)} USDC`,
+							},
 						},
-					},
-				});
+					});
+					signedTransactions.push(bytesToBase64(signedTransaction));
+				}
 				const submitted = await api.submitSolana(
 					activeRecord.plan.executionId,
-					bytesToBase64(signedTransaction),
+					signedTransactions,
 				);
 				setRecord(submitted);
 				onExecutionChange(submitted);
+				if (["SETTLED", "PARTIAL", "FAILED"].includes(submitted.status)) {
+					onSettled(submitted);
+					return;
+				}
 				setPhase("settling");
 				const reconciled = await reconcileUntilTerminal(
 					activeRecord.plan.executionId,
@@ -523,7 +537,7 @@ export function ReviewScreen({
 										: session.executionProvider === "JUPITER"
 											? "Jupiter"
 											: "Uniswap"
-								} quotes are ready for your wallet to confirm.`
+								} quotes are ready for your wallet to confirm.${perLegSolana ? " Swaps settle independently, so partial completion is possible." : ""}`
 							: liveExecution
 								? "No transaction is prepared yet. Resolve the issue below, then refresh the quotes."
 								: "Demo quotes are ready for a simulated confirmation."}
@@ -675,7 +689,9 @@ export function ReviewScreen({
 					{
 						label: hasExecutableTransaction
 							? activeChain === "SOLANA"
-								? "Atomic Solana transaction"
+								? perLegSolana
+									? "Independent Solana swaps"
+									: "Atomic Solana transaction"
 								: "Atomic Investmade Wallet"
 							: liveExecution
 								? "Live execution"

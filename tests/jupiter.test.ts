@@ -37,6 +37,8 @@ function providerFor(
 		}
 		if (url.includes("/swap/v2/build")) {
 			const outputMint = new URL(url).searchParams.get("outputMint") ?? "";
+			const instructionData = Buffer.alloc(instructionBytes);
+			if (instructionBytes) instructionData.write(outputMint);
 			const asset = Object.values(SOLANA_ASSET_REGISTRY).find(
 				(candidate) => candidate.address === outputMint,
 			);
@@ -54,7 +56,7 @@ function providerFor(
 							isWritable: false,
 						},
 					],
-					data: Buffer.alloc(instructionBytes).toString("base64"),
+					data: instructionData.toString("base64"),
 				},
 			});
 		}
@@ -378,8 +380,8 @@ describe("Jupiter atomic Solana execution", () => {
 			);
 
 			expect(prepared.quotes).toHaveLength(count);
-			expect(prepared.solanaTransaction.kind).toBe("SOLANA_TRANSACTION");
-			expect(prepared.solanaTransaction.expectedBalanceChanges).toHaveLength(
+			expect(prepared.solanaTransaction?.kind).toBe("SOLANA_TRANSACTION");
+			expect(prepared.solanaTransaction?.expectedBalanceChanges).toHaveLength(
 				count,
 			);
 			expect(
@@ -450,7 +452,7 @@ describe("Jupiter atomic Solana execution", () => {
 			candidates,
 		);
 
-		expect(prepared.solanaTransaction.kind).toBe("SOLANA_TRANSACTION");
+		expect(prepared.solanaTransaction?.kind).toBe("SOLANA_TRANSACTION");
 		expect(simulateTransaction).toHaveBeenCalledTimes(2);
 		expect(
 			fetcher.mock.calls.filter(([url]) =>
@@ -484,6 +486,99 @@ describe("Jupiter atomic Solana execution", () => {
 				candidates,
 			),
 		).rejects.toMatchObject({ code: "BASKET_TOO_LARGE" });
+	});
+
+	it("falls back to one simulated transaction per leg when the atomic basket is too large", async () => {
+		const wallet = Keypair.generate().publicKey.toBase58();
+		const { provider } = providerFor(wallet, undefined, 600);
+		const assetIds = Object.values(SOLANA_ASSET_REGISTRY)
+			.slice(0, 2)
+			.map((asset) => asset.assetId);
+		const candidates = await candidatesFor(provider, wallet, assetIds);
+
+		const prepared = await provider.prepareBasket(
+			wallet,
+			{
+				chain: "SOLANA",
+				cluster: "mainnet-beta",
+				inputToken: SOLANA_USDC_MINT,
+				sessionId: "per-leg-fallback",
+				periodLimitUsd: 10,
+				selections: assetIds.map((assetId) => ({
+					assetId,
+					amountInBaseUnits: "1000000",
+				})),
+				slippageBps: 50,
+			},
+			candidates,
+		);
+
+		expect(prepared.solanaTransaction).toBeUndefined();
+		expect(prepared.solanaTransactions).toHaveLength(2);
+		expect(
+			prepared.solanaTransactions?.map(
+				(transaction) => transaction.expectedBalanceChanges[0]?.assetId,
+			),
+		).toEqual(assetIds);
+	});
+
+	it("skips capped routes for baskets with three or more assets", async () => {
+		const wallet = Keypair.generate().publicKey.toBase58();
+		const { provider, fetcher } = providerFor(wallet, undefined, 600);
+		const assetIds = Object.values(SOLANA_ASSET_REGISTRY)
+			.slice(0, 3)
+			.map((asset) => asset.assetId);
+		const candidates = await candidatesFor(provider, wallet, assetIds);
+		const baseFetch = fetcher.getMockImplementation();
+		if (!baseFetch) throw new Error("JUPITER_FETCHER_REQUIRED");
+		let activeBuilds = 0;
+		let peakActiveBuilds = 0;
+		fetcher.mockImplementation(async (input) => {
+			const url = String(input);
+			if (
+				url.includes("/swap/v2/build") &&
+				new URL(url).searchParams.has("maxAccounts")
+			) {
+				return Response.json({ error: "No routes found" }, { status: 400 });
+			}
+			if (!url.includes("/swap/v2/build")) return baseFetch(input);
+			activeBuilds += 1;
+			peakActiveBuilds = Math.max(peakActiveBuilds, activeBuilds);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			try {
+				return await baseFetch(input);
+			} finally {
+				activeBuilds -= 1;
+			}
+		});
+
+		const prepared = await provider.prepareBasket(
+			wallet,
+			{
+				chain: "SOLANA",
+				cluster: "mainnet-beta",
+				inputToken: SOLANA_USDC_MINT,
+				sessionId: "three-leg-route-fallback",
+				periodLimitUsd: 10,
+				selections: assetIds.map((assetId) => ({
+					assetId,
+					amountInBaseUnits: "1000000",
+				})),
+				slippageBps: 50,
+			},
+			candidates,
+		);
+
+		expect(prepared.solanaTransaction).toBeUndefined();
+		expect(prepared.solanaTransactions).toHaveLength(assetIds.length);
+		expect(peakActiveBuilds).toBe(assetIds.length);
+		expect(
+			fetcher.mock.calls.filter(
+				([input]) =>
+					String(input).includes("/swap/v2/build") &&
+					new URL(String(input)).searchParams.has("maxAccounts"),
+			),
+		).toHaveLength(0);
 	});
 
 	it("fails closed when Jupiter introduces an unexpected signer", async () => {
@@ -529,17 +624,13 @@ describe("Jupiter atomic Solana execution", () => {
 			},
 		});
 
-		const outputs = await provider.reconcileOutputs(
-			"signature",
-			wallet,
-			[
-				{
-					assetId: "sol:mainnet:SOL",
-					mint: "So11111111111111111111111111111111111111112",
-					minimumAmountOut: "1354411",
-				},
-			],
-		);
+		const outputs = await provider.reconcileOutputs("signature", wallet, [
+			{
+				assetId: "sol:mainnet:SOL",
+				mint: "So11111111111111111111111111111111111111112",
+				minimumAmountOut: "1354411",
+			},
+		]);
 
 		expect(outputs).toEqual([
 			expect.objectContaining({

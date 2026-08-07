@@ -84,14 +84,23 @@ export interface AppDependencies {
 	>;
 	execution: ExecutionProvider;
 	executionProviders?: Partial<Record<ExecutionProviderId, ExecutionProvider>>;
-	solanaExecutionProviders?: Partial<Record<ExecutionProviderId, ExecutionProvider>>;
-	solanaCandidateProviders?: Partial<Record<ExecutionProviderId, CandidateProvider>>;
+	solanaExecutionProviders?: Partial<
+		Record<ExecutionProviderId, ExecutionProvider>
+	>;
+	solanaCandidateProviders?: Partial<
+		Record<ExecutionProviderId, CandidateProvider>
+	>;
 	auth?: {
 		actor(
 			request: Request,
 		): Promise<
 			| ExecutionActor
-			| { wallet: string; txOrigin: string; userId?: string; chain?: "ROBINHOOD" | "SOLANA" }
+			| {
+					wallet: string;
+					txOrigin: string;
+					userId?: string;
+					chain?: "ROBINHOOD" | "SOLANA";
+			  }
 		>;
 	};
 	icons?: AssetIconProvider;
@@ -117,10 +126,7 @@ export function createApp(deps: AppDependencies) {
 	if (deps.config.NODE_ENV === "production") app.set("trust proxy", 1);
 	const auth =
 		deps.auth ??
-		new PrivyWalletAuth(
-			deps.config.PRIVY_APP_ID,
-			deps.config.PRIVY_APP_SECRET,
-		);
+		new PrivyWalletAuth(deps.config.PRIVY_APP_ID, deps.config.PRIVY_APP_SECRET);
 	const chainClient = createPublicClient({
 		transport: http(deps.config.ROBINHOOD_RPC_URL),
 	});
@@ -211,8 +217,12 @@ export function createApp(deps: AppDependencies) {
 			chainId: 4663,
 			stableToken: "USDG",
 			executionProviders: {
-				ZERO_EX: { available: providerConfigured(deps.config, "ZERO_EX", "ROBINHOOD") },
-				UNISWAP: { available: providerConfigured(deps.config, "UNISWAP", "ROBINHOOD") },
+				ZERO_EX: {
+					available: providerConfigured(deps.config, "ZERO_EX", "ROBINHOOD"),
+				},
+				UNISWAP: {
+					available: providerConfigured(deps.config, "UNISWAP", "ROBINHOOD"),
+				},
 				JUPITER: { available: false },
 			},
 			feedRankingProviders: {
@@ -227,8 +237,12 @@ export function createApp(deps: AppDependencies) {
 				stableToken: "USDC",
 				inputMint: SOLANA_USDC_MINT,
 				executionProviders: {
-					JUPITER: { available: providerConfigured(deps.config, "JUPITER", "SOLANA") },
-					ZERO_EX: { available: providerConfigured(deps.config, "ZERO_EX", "SOLANA") },
+					JUPITER: {
+						available: providerConfigured(deps.config, "JUPITER", "SOLANA"),
+					},
+					ZERO_EX: {
+						available: providerConfigured(deps.config, "ZERO_EX", "SOLANA"),
+					},
 				},
 			},
 			periodBudgetBaseUnits: DEFAULT_BUDGET.periodBudgetBaseUnits,
@@ -328,18 +342,18 @@ export function createApp(deps: AppDependencies) {
 		// Keep local demos usable if CoinGecko market history is temporarily down.
 		if (!deps.config.liveExecution) {
 			response.json({
-					period,
-					source: "demo",
-					points: demoHistory(asset.symbol, period),
-					isCompleteHistory: false,
+				period,
+				source: "demo",
+				points: demoHistory(asset.symbol, period),
+				isCompleteHistory: false,
 			});
 			return;
 		}
 		response.json({
-				period,
-				source: "unavailable",
-				points: [],
-				isCompleteHistory: false,
+			period,
+			source: "unavailable",
+			points: [],
+			isCompleteHistory: false,
 		});
 	});
 
@@ -463,7 +477,10 @@ export function createApp(deps: AppDependencies) {
 			if (!pageKey) break;
 		}
 		const knownByMint = new Map(
-			Object.values(SOLANA_ASSET_REGISTRY).map((asset) => [asset.address, asset]),
+			Object.values(SOLANA_ASSET_REGISTRY).map((asset) => [
+				asset.address,
+				asset,
+			]),
 		);
 		response.json({
 			cluster: SOLANA_CLUSTER,
@@ -481,8 +498,7 @@ export function createApp(deps: AppDependencies) {
 						mint,
 						symbol: known?.symbol ?? token.tokenMetadata?.symbol ?? "Unknown",
 						name: known?.name ?? token.tokenMetadata?.name ?? "Unknown token",
-						decimals:
-							known?.decimals ?? token.tokenMetadata?.decimals ?? 0,
+						decimals: known?.decimals ?? token.tokenMetadata?.decimals ?? 0,
 						balanceBaseUnits,
 						iconUrl: token.tokenMetadata?.logo ?? undefined,
 						priceUsd: usdPrice ? Number(usdPrice.value) : undefined,
@@ -636,51 +652,53 @@ export function createApp(deps: AppDependencies) {
 		return deps.store.getPreferences(response.locals.wallet);
 	};
 
-	app.post(
-		"/api/preferences",
-		requireWallet,
-		async (request, response) => {
-			const preferences = onboardingPreferencesSchema.parse(request.body);
-			if (
-				preferences.activeChain !== response.locals.chain ||
-				(preferences.activeChain === "SOLANA" &&
-					!["JUPITER", "ZERO_EX"].includes(preferences.executionProvider)) ||
-				(preferences.activeChain === "ROBINHOOD" &&
-					preferences.executionProvider === "JUPITER")
-			) {
-				response.status(409).json({ error: "CHAIN_WALLET_MISMATCH" });
-				return;
-			}
-			if (!providerConfigured(deps.config, preferences.executionProvider, preferences.activeChain)) {
-				response.status(422).json({
-					error: "EXECUTION_PROVIDER_UNAVAILABLE",
-					message: `${providerLabel(preferences.executionProvider)} is not configured.`,
-					provider: preferences.executionProvider,
-				});
-				return;
-			}
-			const storedPreferences =
-				preferences.activeChain === "SOLANA"
-					? { ...preferences, solanaExecutionWallet: response.locals.wallet }
-					: preferences;
-			const ownerId = preferenceOwner(response);
-			const existing = await preferencesFor(response);
-			if (
-				existing &&
-				(existing.executionProvider !== storedPreferences.executionProvider ||
-					existing.feedRankingProvider !== storedPreferences.feedRankingProvider)
-			) {
-				await deps.store.invalidatePreparedExecutions(ownerId);
-			}
-			response.json(
-				await deps.store.setPreferences(
-					ownerId,
-					storedPreferences,
-					response.locals.wallet,
-				),
-			);
-		},
-	);
+	app.post("/api/preferences", requireWallet, async (request, response) => {
+		const preferences = onboardingPreferencesSchema.parse(request.body);
+		if (
+			preferences.activeChain !== response.locals.chain ||
+			(preferences.activeChain === "SOLANA" &&
+				!["JUPITER", "ZERO_EX"].includes(preferences.executionProvider)) ||
+			(preferences.activeChain === "ROBINHOOD" &&
+				preferences.executionProvider === "JUPITER")
+		) {
+			response.status(409).json({ error: "CHAIN_WALLET_MISMATCH" });
+			return;
+		}
+		if (
+			!providerConfigured(
+				deps.config,
+				preferences.executionProvider,
+				preferences.activeChain,
+			)
+		) {
+			response.status(422).json({
+				error: "EXECUTION_PROVIDER_UNAVAILABLE",
+				message: `${providerLabel(preferences.executionProvider)} is not configured.`,
+				provider: preferences.executionProvider,
+			});
+			return;
+		}
+		const storedPreferences =
+			preferences.activeChain === "SOLANA"
+				? { ...preferences, solanaExecutionWallet: response.locals.wallet }
+				: preferences;
+		const ownerId = preferenceOwner(response);
+		const existing = await preferencesFor(response);
+		if (
+			existing &&
+			(existing.executionProvider !== storedPreferences.executionProvider ||
+				existing.feedRankingProvider !== storedPreferences.feedRankingProvider)
+		) {
+			await deps.store.invalidatePreparedExecutions(ownerId);
+		}
+		response.json(
+			await deps.store.setPreferences(
+				ownerId,
+				storedPreferences,
+				response.locals.wallet,
+			),
+		);
+	});
 
 	app.get("/api/preferences", requireWallet, async (_request, response) => {
 		const preferences = await preferencesFor(response);
@@ -769,8 +787,7 @@ export function createApp(deps: AppDependencies) {
 			if (
 				submittedPreferences.executionProvider !== session.executionProvider ||
 				submittedPreferences.activeChain !== session.chain ||
-				submittedPreferences.feedRankingProvider !==
-					session.feedRankingProvider
+				submittedPreferences.feedRankingProvider !== session.feedRankingProvider
 			) {
 				response.status(409).json({
 					error: "EXECUTION_PROVIDER_CHANGED",
@@ -863,7 +880,7 @@ export function createApp(deps: AppDependencies) {
 			const pageSize = Math.min(candidateLimit, budget.maxCards);
 			const discoveredCandidates =
 				await candidatesForSession.getCandidatesForFeed(
-				response.locals.wallet,
+					response.locals.wallet,
 					ranking.assets.map((asset) => asset.assetId),
 					budget.slotBudgetBaseUnits,
 					new Date(),
@@ -1088,8 +1105,7 @@ export function createApp(deps: AppDependencies) {
 			}
 			timing.mark("balance");
 			const slotBudgetBaseUnits = parsed.selections[0]?.amountInBaseUnits;
-			const candidates =
-				await candidatesForSession.getCandidatesForExecution(
+			const candidates = await candidatesForSession.getCandidatesForExecution(
 				response.locals.wallet,
 				parsed.selections.map((selection) => selection.assetId),
 				slotBudgetBaseUnits,
@@ -1165,6 +1181,7 @@ export function createApp(deps: AppDependencies) {
 				),
 				quotes,
 				solanaTransaction: preparation.solanaTransaction,
+				solanaTransactions: preparation.solanaTransactions,
 				generatedAt: new Date().toISOString(),
 			};
 			const execution = session.executionId
@@ -1178,12 +1195,10 @@ export function createApp(deps: AppDependencies) {
 			timing.apply(response);
 			response.json({
 				...execution,
-				kind:
-					parsed.chain === "SOLANA"
-						? "SOLANA_TRANSACTION"
-						: "EVM_CALLS",
+				kind: parsed.chain === "SOLANA" ? "SOLANA_TRANSACTION" : "EVM_CALLS",
 				walletCalls: preparation.walletCalls,
 				solanaTransaction: preparation.solanaTransaction,
+				solanaTransactions: preparation.solanaTransactions,
 			});
 		},
 	);
@@ -1252,32 +1267,78 @@ export function createApp(deps: AppDependencies) {
 				throw new Error("EXECUTION_PROVIDER_MISMATCH");
 			}
 			if (execution.plan.chain === "SOLANA") {
-				const provider = executionProvider(deps, execution.plan.provider, "SOLANA");
-				const signedTransaction = z.string().min(1).parse(
-					request.body?.signedTransaction,
+				const provider = executionProvider(
+					deps,
+					execution.plan.provider,
+					"SOLANA",
 				);
-				if (
-					!execution.plan.solanaTransaction ||
-					!provider.submitSignedTransaction
-				) {
+				if (execution.status !== "PREPARED") {
+					if (execution.status === "SUBMITTED") {
+						response.json(execution);
+						return;
+					}
+					response.status(409).json({ error: "EXECUTION_NOT_PREPARED" });
+					return;
+				}
+				const preparedTransactions =
+					execution.plan.solanaTransactions ??
+					(execution.plan.solanaTransaction
+						? [execution.plan.solanaTransaction]
+						: []);
+				const submitSignedTransaction = provider.submitSignedTransaction;
+				const signedTransactions = z
+					.array(z.string().min(1))
+					.parse(
+						request.body?.signedTransactions ??
+							(request.body?.signedTransaction
+								? [request.body.signedTransaction]
+								: undefined),
+					);
+				if (!preparedTransactions.length || !submitSignedTransaction) {
 					throw new Error("SOLANA_TRANSACTION_MISSING");
 				}
-				const signature = await provider.submitSignedTransaction(
-					{
-						...execution.plan.solanaTransaction,
-						messageCommitment:
-							execution.plan.solanaTransaction
-								.messageCommitment as `sha256:${string}`,
-					},
-					signedTransaction,
+				if (signedTransactions.length !== preparedTransactions.length) {
+					response
+						.status(422)
+						.json({ error: "INVALID_SOLANA_TRANSACTION_COUNT" });
+					return;
+				}
+				const submissions = await Promise.allSettled(
+					preparedTransactions.map((prepared, index) =>
+						submitSignedTransaction.call(
+							provider,
+							{
+								...prepared,
+								messageCommitment:
+									prepared.messageCommitment as `sha256:${string}`,
+							},
+							signedTransactions[index] ?? "",
+						),
+					),
 				);
+				const signatures = submissions.map((result) =>
+					result.status === "fulfilled" ? (result.value ?? "") : "",
+				);
+				const failedOutputs = submissions.flatMap((result, index) =>
+					result.status === "rejected"
+						? (preparedTransactions[index]?.expectedBalanceChanges ?? []).map(
+								(change) => ({
+									assetId: change.assetId,
+									amountOutBaseUnits: "0",
+									transactionHash: "",
+									status: "failed" as const,
+								}),
+							)
+						: [],
+				);
+				const submitted = signatures.some(Boolean);
 				response.json(
 					await deps.store.updateExecution(
 						execution.plan.executionId,
-						"SUBMITTED",
-						[signature],
-						[],
-						"BATCH",
+						submitted ? "SUBMITTED" : "FAILED",
+						submitted ? signatures : [],
+						failedOutputs,
+						execution.plan.solanaTransactions ? "SEQUENTIAL" : "BATCH",
 					),
 				);
 				return;
@@ -1342,60 +1403,77 @@ export function createApp(deps: AppDependencies) {
 				throw new Error("EXECUTION_PROVIDER_MISMATCH");
 			}
 			if (execution.plan.chain === "SOLANA") {
-				const provider = executionProvider(deps, execution.plan.provider, "SOLANA");
-				const signature = execution.transactionHashes[0];
+				const provider = executionProvider(
+					deps,
+					execution.plan.provider,
+					"SOLANA",
+				);
+				const preparedTransactions =
+					execution.plan.solanaTransactions ??
+					(execution.plan.solanaTransaction
+						? [execution.plan.solanaTransaction]
+						: []);
 				if (
-					!signature ||
-					!execution.plan.solanaTransaction ||
+					!preparedTransactions.length ||
 					!provider.transactionStatus ||
 					!provider.reconcileOutputs
 				) {
 					throw new Error("SOLANA_RECONCILIATION_UNAVAILABLE");
 				}
-				const status = await provider.transactionStatus(signature);
-				if (status.state === "PENDING") {
-					response
-						.status(202)
-						.json({ ...execution, reconciliation: ["pending"] });
-					return;
-				}
-				if (status.state === "FAILED") {
-					response.json(
-						await deps.store.updateExecution(
-							execution.plan.executionId,
-							"FAILED",
-							[signature],
-							execution.plan.quotes.map((quote) => ({
-								assetId: quote.assetId,
+				const transactionStatus = provider.transactionStatus.bind(provider);
+				const reconcileOutputs = provider.reconcileOutputs.bind(provider);
+				const reconciled = await Promise.all(
+					preparedTransactions.map(async (prepared, index) => {
+						const signature = execution.transactionHashes[index];
+						if (!signature) {
+							return prepared.expectedBalanceChanges.map((change) => ({
+								assetId: change.assetId,
+								amountOutBaseUnits: "0",
+								transactionHash: "",
+								status: "failed" as const,
+							}));
+						}
+						const status = await transactionStatus(signature);
+						if (!status || status.state === "PENDING") return undefined;
+						if (status.state === "FAILED") {
+							return prepared.expectedBalanceChanges.map((change) => ({
+								assetId: change.assetId,
 								amountOutBaseUnits: "0",
 								transactionHash: signature,
 								blockNumber: status.slot?.toString(),
 								status: "failed" as const,
-							})),
-							"BATCH",
-						),
-					);
-					return;
-				}
-				const outputs = await provider.reconcileOutputs(
-					signature,
-					session.wallet,
-					execution.plan.solanaTransaction.expectedBalanceChanges,
+							}));
+						}
+						return reconcileOutputs(
+							signature,
+							session.wallet,
+							prepared.expectedBalanceChanges,
+						);
+					}),
 				);
-				if (!outputs) {
+				if (reconciled.some((outputs) => !outputs)) {
 					response
 						.status(202)
 						.json({ ...execution, reconciliation: ["pending"] });
 					return;
 				}
-				const settled = outputs.every((output) => output.status === "success");
+				const outputs = reconciled.flatMap((result) => result ?? []);
+				const successful = outputs.filter(
+					(output) => output.status === "success",
+				).length;
+				const status =
+					successful === outputs.length
+						? "SETTLED"
+						: successful > 0
+							? "PARTIAL"
+							: "FAILED";
 				response.json(
 					await deps.store.updateExecution(
 						execution.plan.executionId,
-						settled ? "SETTLED" : "FAILED",
-						[signature],
+						status,
+						execution.transactionHashes.filter(Boolean),
 						outputs,
-						"BATCH",
+						execution.plan.solanaTransactions ? "SEQUENTIAL" : "BATCH",
 					),
 				);
 				return;
@@ -1610,13 +1688,19 @@ export function createApp(deps: AppDependencies) {
 				return;
 			}
 			const selectedProvider =
-				(await preferencesFor(response))
-					?.executionProvider ?? "ZERO_EX";
+				(await preferencesFor(response))?.executionProvider ?? "ZERO_EX";
 			const selectedChain = response.locals.chain ?? "ROBINHOOD";
-			const candidatesForExit = candidateProvider(deps, selectedProvider, selectedChain);
-			const executionForExit = executionProvider(deps, selectedProvider, selectedChain);
-			const candidates =
-				await candidatesForExit.getCandidatesForExecution(
+			const candidatesForExit = candidateProvider(
+				deps,
+				selectedProvider,
+				selectedChain,
+			);
+			const executionForExit = executionProvider(
+				deps,
+				selectedProvider,
+				selectedChain,
+			);
+			const candidates = await candidatesForExit.getCandidatesForExecution(
 				response.locals.wallet,
 				[String(request.params.assetId)],
 				undefined,
@@ -1651,7 +1735,9 @@ export function createApp(deps: AppDependencies) {
 				);
 			}
 			response.json({
-				kind: preparation.solanaTransaction ? "SOLANA_TRANSACTION" : "EVM_CALLS",
+				kind: preparation.solanaTransaction
+					? "SOLANA_TRANSACTION"
+					: "EVM_CALLS",
 				provider: selectedProvider,
 				asset: {
 					assetId: candidate.assetId,
@@ -1783,10 +1869,11 @@ function executionProvider(
 	id: ExecutionProviderId,
 	chain: "ROBINHOOD" | "SOLANA" = "ROBINHOOD",
 ): ExecutionProvider {
-	const registry = chain === "SOLANA" ? deps.solanaExecutionProviders : deps.executionProviders;
-	const provider = registry
-		? registry[id]
-		: deps.execution;
+	const registry =
+		chain === "SOLANA"
+			? deps.solanaExecutionProviders
+			: deps.executionProviders;
+	const provider = registry ? registry[id] : deps.execution;
 	if (!provider) {
 		throw new ExecutionProviderError(
 			id,
@@ -1827,10 +1914,11 @@ function candidateProvider(
 	id: ExecutionProviderId,
 	chain: "ROBINHOOD" | "SOLANA" = "ROBINHOOD",
 ): CandidateProvider {
-	const registry = chain === "SOLANA" ? deps.solanaCandidateProviders : deps.candidateProviders;
-	const provider = registry
-		? registry[id]
-		: deps.candidates;
+	const registry =
+		chain === "SOLANA"
+			? deps.solanaCandidateProviders
+			: deps.candidateProviders;
+	const provider = registry ? registry[id] : deps.candidates;
 	if (!provider) {
 		throw new ExecutionProviderError(
 			id,
@@ -1850,7 +1938,7 @@ async function rankFeed(
 	const deterministic = registry?.DETERMINISTIC;
 	const requested =
 		requestedProvider === "DETERMINISTIC"
-			? deterministic ?? deps.inference
+			? (deterministic ?? deps.inference)
 			: registry
 				? registry.ZERO_G
 				: deps.inference;
@@ -1865,8 +1953,7 @@ async function rankFeed(
 					? "DETERMINISTIC"
 					: requestedProvider;
 			const warnings =
-				effectiveProvider === "DETERMINISTIC" &&
-				requestedProvider === "ZERO_G"
+				effectiveProvider === "DETERMINISTIC" && requestedProvider === "ZERO_G"
 					? [...generated.output.warnings, fallbackWarning]
 					: generated.output.warnings;
 			return {
@@ -1917,9 +2004,7 @@ function providerConfigured(
 	}
 	if (id === "JUPITER") {
 		return Boolean(
-			config.JUPITER_API_KEY &&
-				config.SOLANA_RPC_URL &&
-				config.SOLANA_WS_URL,
+			config.JUPITER_API_KEY && config.SOLANA_RPC_URL && config.SOLANA_WS_URL,
 		);
 	}
 	if (!config.liveExecution) return true;

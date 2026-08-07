@@ -7,6 +7,46 @@ import { formatTicketSizeUsd } from "../../domain/schemas";
 import { AssetMark } from "./AssetMark";
 import { Close } from "./Icons";
 
+export function BudgetSummary({
+	selectedCount,
+	ticketSizeUsd,
+	periodLimitUsd,
+	activeChain,
+	className = "",
+}: {
+	selectedCount: number;
+	ticketSizeUsd: number;
+	periodLimitUsd: number;
+	activeChain: AppChain;
+	className?: string;
+}) {
+	const remaining = Math.max(
+		0,
+		Math.round((periodLimitUsd - selectedCount * ticketSizeUsd) * 100) / 100,
+	);
+	const remainingPercent =
+		periodLimitUsd > 0 ? (remaining / periodLimitUsd) * 100 : 0;
+
+	return (
+		<div className={`rail-budget${className ? ` ${className}` : ""}`}>
+			<span>
+				This month limit: <strong>{formatTicketSizeUsd(remaining)}</strong>{" "}
+				{activeChain === "SOLANA" ? "USDC" : "USDG"} left
+			</span>
+			<span
+				className="rail-budget-progress"
+				role="progressbar"
+				aria-label="Monthly budget left"
+				aria-valuemin={0}
+				aria-valuemax={periodLimitUsd}
+				aria-valuenow={remaining}
+			>
+				<i style={{ width: `${remainingPercent}%` }} />
+			</span>
+		</div>
+	);
+}
+
 export function BudgetRail({
 	selected,
 	onRemove,
@@ -22,31 +62,14 @@ export function BudgetRail({
 	executionProvider: ExecutionProviderId;
 	activeChain: AppChain;
 }) {
-	const remaining = Math.max(
-		0,
-		Math.round((periodLimitUsd - selected.length * ticketSizeUsd) * 100) / 100,
-	);
-	const remainingPercent =
-		periodLimitUsd > 0 ? (remaining / periodLimitUsd) * 100 : 0;
-
 	return (
 		<aside className="budget-rail" aria-label="Basket and providers">
-			<div className="rail-budget">
-				<span>
-					This month limit: <strong>{formatTicketSizeUsd(remaining)}</strong>{" "}
-					{activeChain === "SOLANA" ? "USDC" : "USDG"} left
-				</span>
-				<span
-					className="rail-budget-progress"
-					role="progressbar"
-					aria-label="Monthly budget left"
-					aria-valuemin={0}
-					aria-valuemax={periodLimitUsd}
-					aria-valuenow={remaining}
-				>
-					<i style={{ width: `${remainingPercent}%` }} />
-				</span>
-			</div>
+			<BudgetSummary
+				selectedCount={selected.length}
+				ticketSizeUsd={ticketSizeUsd}
+				periodLimitUsd={periodLimitUsd}
+				activeChain={activeChain}
+			/>
 			<div className="budget-meta">
 				<span className="quote-provider">
 					Quotes execution: <i aria-hidden="true" />{" "}

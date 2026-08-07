@@ -586,6 +586,8 @@ button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px
   padding-top: 18px;
 }
 .gesture {
+  position: relative;
+  z-index: 0;
   border: 0;
   background: none;
   display: flex;
@@ -604,6 +606,7 @@ button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px
 .gesture-add > svg { color: var(--ink); background: var(--acid); }
 
 .swipe-card {
+  z-index: 1;
   background: var(--paper);
   border: 2px solid var(--line-strong);
   border-radius: var(--radius);
@@ -617,6 +620,13 @@ button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px
 .swipe-card.is-dragging { cursor: grabbing; transition: none; }
 .swipe-card.is-invest { border-color: #38a44d; box-shadow: 16px 14px 0 #bfe8c5; }
 .swipe-card.is-skip { border-color: var(--coral); box-shadow: 16px 14px 0 #ffd0cb; }
+@media (min-width: 761px) {
+  .swipe-card { display: flex; flex-direction: column; }
+  .price-chart { flex: 1; height: auto; min-height: 230px; }
+  .chart-plot { flex: 1; height: auto; min-height: 112px; }
+  .price-chart.has-info { flex: 0 0 auto; min-height: 0; }
+  .price-chart.has-info .chart-plot { flex: 0 0 112px; height: 112px; }
+}
 .card-decision-flash {
   position: absolute;
   inset: 0;
@@ -689,8 +699,10 @@ button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px
 .chart-meta.has-coverage span { grid-column: 2; grid-row: 1; }
 .chart-meta.has-coverage strong { grid-column: 1; grid-row: 1; justify-self: start; }
 .chart-plot { position: relative; width: 100%; height: 112px; padding-right: 48px; }
-.price-chart svg {
-  width: 100%;
+.chart-plot > svg {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(100% - 48px);
   height: 100%;
   overflow: visible;
 }
@@ -778,7 +790,10 @@ a.asset-rank-tag:focus-visible { outline: 2px solid currentColor; outline-offset
 .metric-row span + span { border-left: 1px solid var(--line); padding-left: 11px; }
 .metric-row strong { color: var(--blue); font-size: 19px; }
 
-.card-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 870px; margin: 0 auto; }
+.card-actions { position: relative; z-index: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 870px; margin: 0 auto; }
+@media (min-width: 761px) {
+  .card-actions { margin-top: 24px; }
+}
 .button {
   border: 1.5px solid var(--line-strong);
   border-radius: 9px;
@@ -813,6 +828,7 @@ a.asset-rank-tag:focus-visible { outline: 2px solid currentColor; outline-offset
 .basket-row button svg { width: 17px; }
 .review-preparing { min-height: calc(100dvh - 132px); }
 .rail-budget { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.mobile-budget-summary { display: none; }
 .rail-budget strong { color: var(--ink); font-size: 13px; }
 .rail-budget-progress { height: 3px; overflow: hidden; border-radius: 999px; background: #dfe3e8; }
 .rail-budget-progress i { display: block; height: 100%; border-radius: inherit; background: var(--acid); transition: width 180ms ease; }
@@ -993,7 +1009,7 @@ a.asset-rank-tag:focus-visible { outline: 2px solid currentColor; outline-offset
   justify-content: center;
   gap: 10px;
   min-height: 58px;
-  margin-bottom: 38px;
+  margin: 24px 0 10px;
   padding: 12px 18px;
   border: 1px solid var(--acid);
   border-radius: 18px;
@@ -1060,9 +1076,10 @@ a.asset-rank-tag:focus-visible { outline: 2px solid currentColor; outline-offset
 .status-failed { color: var(--coral); }
 .receipt-missing-snapshot { color: var(--muted); font-size: 12px; line-height: 1.5; padding: 12px 0; margin: 0; }
 .receipt-captured-at {
-  margin: 16px 0 28px;
+  margin: 0 0 28px;
   color: var(--muted);
   font-size: 12px;
+  text-align: center;
 }
 .receipt-technical {
   border-top: 1px solid var(--line);
@@ -1402,23 +1419,37 @@ html[data-chain="solana"] .button-top-up:hover:not(:disabled) { color: var(--acc
   }
   .topbar-onboarding .wallet-button svg { width: 17px; height: 17px; }
   .wallet-pill-label { gap: 7px; font-size: 12px; }
-  .swipe-page { display: block; padding-bottom: calc(156px + env(safe-area-inset-bottom)); }
-  .swipe-workspace { border: 0; padding: 18px 15px; }
+  .swipe-page { display: block; padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
+  .swipe-workspace {
+    min-height: calc(100dvh - 64px - env(safe-area-inset-top));
+    border: 0;
+    padding: 18px 15px calc(140px + env(safe-area-inset-bottom));
+  }
   .page-heading h1 { font-size: 31px; }
   .page-heading p { font-size: 13px; line-height: 1.45; }
   .page-heading p + p { display: none; }
   .card-stage { grid-template-columns: 1fr; display: block; min-height: 0; padding-top: 14px; }
   .gesture { display: none; }
-  .swipe-card { min-height: 0; padding: 14px 14px 8px; box-shadow: 7px 7px 0 #dce0e6; }
+  .swipe-card {
+    display: flex;
+    min-height: max(505px, calc(100dvh - 346px - env(safe-area-inset-top)));
+    flex-direction: column;
+    padding: 14px 14px 8px;
+    box-shadow: 7px 7px 0 #dce0e6;
+  }
+  .swipe-workspace:has(.card-actions.has-selection) .swipe-card {
+    min-height: max(470px, calc(100dvh - 400px - env(safe-area-inset-top)));
+  }
   .swipe-card::after { display: none; }
   .asset-title h2 { font-size: 32px; }
   .asset-mark-lg { width: 64px; height: 64px; }
   .allocation-stamp { width: 66px; height: 64px; }
   .allocation-stamp strong { font-size: 28px; }
-  .price-chart { height: 365px; margin: 12px 0 0; }
+  .price-chart { flex: 1; height: auto; min-height: 280px; margin: 12px 0 0; }
   .chart-meta { padding-top: 7px; }
   .chart-meta strong { font-size: 20px; }
   .chart-plot { flex: 1; min-height: 0; height: auto; }
+  .price-chart.has-info .chart-plot { flex: 1 1 150px; height: auto; min-height: 150px; }
   .card-reason { font-size: 11px; }
   .ai-warnings { margin-top: 11px; font-size: 11px; }
   .card-evidence { grid-template-columns: .85fr 1.15fr; }
@@ -1443,12 +1474,21 @@ html[data-chain="solana"] .button-top-up:hover:not(:disabled) { color: var(--acc
     backdrop-filter: blur(12px);
   }
   .card-actions .button { min-height: 50px; padding-inline: 12px; }
+  .mobile-budget-summary {
+    display: grid;
+    gap: 6px;
+    max-width: 590px;
+    margin: 14px auto 0;
+  }
   .card-actions .button-outline { display: none; }
   .card-actions.has-selection .button-outline {
     display: inline-flex;
     grid-column: 1 / -1;
     grid-row: 1;
   }
+  .card-actions.has-selection .button-skip,
+  .card-actions.has-selection .button-primary { grid-row: 2; }
+  .budget-rail > .rail-budget { display: none; }
   .budget-rail { padding: 12px 15px 10px; }
   .budget-meta { flex-wrap: wrap; }
   .evidence-detail { flex-direction: column; align-items: stretch; gap: 12px; margin: 15px 15px 80px; }
@@ -1524,7 +1564,7 @@ html[data-chain="solana"] .button-top-up:hover:not(:disabled) { color: var(--acc
   .receipt-check svg { width: 30px; height: 30px; }
   .receipt-verification {
     min-height: 44px;
-    margin-bottom: 12px;
+    margin: 14px 0 8px;
     padding-block: 8px;
     border-radius: 13px;
   }
@@ -1546,7 +1586,7 @@ html[data-chain="solana"] .button-top-up:hover:not(:disabled) { color: var(--acc
   .receipt-asset small,
   .receipt-output small { font-size: 11px; }
   .receipt-output > span { font-size: 12px; }
-  .receipt-captured-at { margin: 6px 0 8px; }
+  .receipt-captured-at { margin: 0 0 8px; }
   .receipt-execution-details summary,
   .receipt-transaction-row {
     grid-template-columns: 36px minmax(0, 1fr) 20px;

@@ -56,10 +56,10 @@ function Root() {
   }, []);
 
   if (error) {
-    return <main className="fatal-state"><h1>investmade.fun is unavailable</h1><p>{error}</p></main>;
+    return <main className="fatal-state"><h1>invest4.fun is unavailable</h1><p>{error}</p></main>;
   }
   if (!config) {
-    return <main className="loading-state"><span /><h1>Loading investmade.fun</h1></main>;
+    return <main className="loading-state"><span /><h1>Loading invest4.fun</h1></main>;
   }
 
   return (

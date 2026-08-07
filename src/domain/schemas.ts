@@ -6,10 +6,7 @@ import {
 	USDG_ADDRESS,
 	USDG_DECIMALS,
 } from "./constants.js";
-import {
-	SOLANA_CLUSTER,
-	SOLANA_USDC_MINT,
-} from "./solana.js";
+import { SOLANA_CLUSTER, SOLANA_USDC_MINT } from "./solana.js";
 
 export const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 export const solanaAddressSchema = z
@@ -25,10 +22,7 @@ export const executionProviderIdSchema = z.enum([
 	"UNISWAP",
 	"JUPITER",
 ]);
-export const feedRankingProviderIdSchema = z.enum([
-	"ZERO_G",
-	"DETERMINISTIC",
-]);
+export const feedRankingProviderIdSchema = z.enum(["ZERO_G", "DETERMINISTIC"]);
 export const assetClassificationSchema = z.enum([
 	"TOKENIZED_STOCK",
 	"MEMECOIN",
@@ -352,6 +346,21 @@ export const executionRequestSchema = z.preprocess(
 	]),
 );
 
+const solanaPreparedTransactionSchema = z.object({
+	kind: z.literal("SOLANA_TRANSACTION"),
+	unsignedTransactionBase64: z.string().min(1),
+	messageCommitment: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+	recentBlockhash: z.string().min(1),
+	lastValidBlockHeight: z.number().int().positive(),
+	expectedBalanceChanges: z
+		.array(z.object({
+			assetId: z.string().min(1),
+			mint: solanaAddressSchema,
+			minimumAmountOut: baseUnitsSchema,
+		}))
+		.min(1),
+});
+
 const executionPlanBaseSchema = z.object({
 	executionId: z.string().min(1),
 	sessionId: z.string().min(1),
@@ -368,28 +377,20 @@ const executionPlanBaseSchema = z.object({
 	callCommitments: z.array(z.string().regex(/^sha256:[a-f0-9]{64}$/)),
 	quotes: z.array(quoteSchema).min(1),
 	generatedAt: z.string().datetime(),
-	solanaTransaction: z
-		.object({
-			kind: z.literal("SOLANA_TRANSACTION"),
-			unsignedTransactionBase64: z.string().min(1),
-			messageCommitment: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-			recentBlockhash: z.string().min(1),
-			lastValidBlockHeight: z.number().int().positive(),
-			expectedBalanceChanges: z.array(
-				z.object({
-					assetId: z.string().min(1),
-					mint: solanaAddressSchema,
-					minimumAmountOut: baseUnitsSchema,
-				}),
-			),
-		})
+	solanaTransaction: solanaPreparedTransactionSchema.optional(),
+	solanaTransactions: z
+		.array(solanaPreparedTransactionSchema)
+		.min(1)
 		.optional(),
 });
 
 export const executionPlanSchema = executionPlanBaseSchema
 	.superRefine((plan, context) => {
 		if (plan.chain === "ROBINHOOD") {
-			if (plan.chainId !== ROBINHOOD_CHAIN_ID || plan.inputToken !== USDG_ADDRESS) {
+			if (
+				plan.chainId !== ROBINHOOD_CHAIN_ID ||
+				plan.inputToken !== USDG_ADDRESS
+			) {
 				context.addIssue({
 					code: "custom",
 					message: "Invalid Robinhood execution plan",
@@ -400,7 +401,8 @@ export const executionPlanSchema = executionPlanBaseSchema
 		if (
 			plan.cluster !== SOLANA_CLUSTER ||
 			plan.inputToken !== SOLANA_USDC_MINT ||
-			!plan.solanaTransaction ||
+			(!plan.solanaTransaction && !plan.solanaTransactions?.length) ||
+			(plan.solanaTransaction && plan.solanaTransactions?.length) ||
 			!plan.signingWallet
 		) {
 			context.addIssue({
@@ -418,9 +420,7 @@ export const executionPlanSchema = executionPlanBaseSchema
 	}));
 
 export type ExecutionProviderId = z.infer<typeof executionProviderIdSchema>;
-export type FeedRankingProviderId = z.infer<
-	typeof feedRankingProviderIdSchema
->;
+export type FeedRankingProviderId = z.infer<typeof feedRankingProviderIdSchema>;
 export type AppChain = z.infer<typeof appChainSchema>;
 export type Candidate = z.infer<typeof candidateSchema>;
 export type Quote = z.infer<typeof quoteSchema>;

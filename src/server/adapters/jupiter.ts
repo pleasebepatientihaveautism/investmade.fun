@@ -9,14 +9,6 @@ import {
 	VersionedTransaction,
 } from "@solana/web3.js";
 import type { RegistryAsset } from "../../domain/constants.js";
-import {
-	SOLANA_ASSET_REGISTRY,
-	SOLANA_NATIVE_MINT,
-	SOLANA_USDC_DECIMALS,
-	SOLANA_USDC_MINT,
-	solanaAssetById,
-	type SolanaAsset,
-} from "../../domain/solana.js";
 import type {
 	Candidate,
 	ExecutionRequest,
@@ -24,10 +16,18 @@ import type {
 	RankingCandidate,
 } from "../../domain/schemas.js";
 import {
-	ExecutionProviderError,
+	SOLANA_ASSET_REGISTRY,
+	SOLANA_NATIVE_MINT,
+	SOLANA_USDC_DECIMALS,
+	SOLANA_USDC_MINT,
+	type SolanaAsset,
+	solanaAssetById,
+} from "../../domain/solana.js";
+import {
 	type CandidateDiscoveryOptions,
 	type CandidateProvider,
 	type ExecutionProvider,
+	ExecutionProviderError,
 	type ProviderSnapshotCache,
 	type SolanaPreparedTransaction,
 } from "./types.js";
@@ -119,7 +119,10 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		string,
 		{ expiresAt: number; tokens: JupiterToken[] }
 	>();
-	private readonly discoveryInFlight = new Map<string, Promise<JupiterToken[]>>();
+	private readonly discoveryInFlight = new Map<
+		string,
+		Promise<JupiterToken[]>
+	>();
 
 	constructor(
 		private readonly apiKey: string,
@@ -244,71 +247,76 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		candidates: Candidate[],
 	): Promise<{
 		quotes: Quote[];
-		solanaTransaction: SolanaPreparedTransaction;
+		solanaTransaction?: SolanaPreparedTransaction;
+		solanaTransactions?: SolanaPreparedTransaction[];
 	}> {
 		if (request.chain !== "SOLANA") {
 			throw providerError("UNSUPPORTED_CHAIN", "Jupiter supports Solana only.");
 		}
-		const byId = new Map(candidates.map((candidate) => [candidate.assetId, candidate]));
+		const byId = new Map(
+			candidates.map((candidate) => [candidate.assetId, candidate]),
+		);
 		const accountProfiles =
-			request.selections.length >= 5
-				? [12, 10, 8, 6, 4]
-				: [undefined, 24, 16, 12];
+			request.selections.length >= 3 ? [undefined] : [undefined, 24, 16, 12];
 		let lastRetryableError: ExecutionProviderError | undefined;
 		// ponytail: one fresh route retry; add DEX exclusions only if failures persist.
 		let retriedRouteFailure = false;
 		const smallestWorkingBuild = new Map<string, JupiterBuild>();
+		let fallbackPrepared: Array<{
+			candidate: Candidate;
+			amount: string;
+			build: JupiterBuild;
+			quote: Quote;
+		}> = [];
 		for (const maxAccounts of accountProfiles) {
-			const prepared: Array<{
-				candidate: Candidate;
-				amount: string;
-				build: JupiterBuild;
-				quote: Quote;
-			}> = [];
-			for (const selection of request.selections) {
-				const candidate = byId.get(selection.assetId);
-				if (!candidate) {
-					throw providerError(
-						"INVALID_TOKEN",
-						`${selection.assetId} is not in the Solana execution set.`,
-					);
-				}
-				let build: JupiterBuild;
-				try {
-					build = await this.build(
-						wallet,
-						candidate.contract,
-						selection.amountInBaseUnits,
-						SOLANA_USDC_MINT,
-						maxAccounts,
-					);
-					smallestWorkingBuild.set(selection.assetId, build);
-				} catch (error) {
-					const previous = smallestWorkingBuild.get(selection.assetId);
-					if (
-						!previous ||
-						!(error instanceof ExecutionProviderError) ||
-						error.code !== "INVALID_TRANSACTION" ||
-						!error.upstreamReason?.includes("No routes found")
-					) {
-						throw error;
+			// ponytail: independent Jupiter legs are network-bound, so build them together.
+			const prepared = await Promise.all(
+				request.selections.map(async (selection) => {
+					const candidate = byId.get(selection.assetId);
+					if (!candidate) {
+						throw providerError(
+							"INVALID_TOKEN",
+							`${selection.assetId} is not in the Solana execution set.`,
+						);
 					}
-					// Some routes cannot honor the next tighter account cap. Keep that
-					// leg's smallest valid build while continuing to compact the others.
-					build = previous;
-				}
-				prepared.push({
-					candidate,
-					amount: selection.amountInBaseUnits,
-					build,
-					quote: quoteFromBuild(
+					let build: JupiterBuild;
+					try {
+						build = await this.build(
+							wallet,
+							candidate.contract,
+							selection.amountInBaseUnits,
+							SOLANA_USDC_MINT,
+							maxAccounts,
+						);
+						smallestWorkingBuild.set(selection.assetId, build);
+					} catch (error) {
+						const previous = smallestWorkingBuild.get(selection.assetId);
+						if (
+							!previous ||
+							!(error instanceof ExecutionProviderError) ||
+							error.code !== "INVALID_TRANSACTION" ||
+							!error.upstreamReason?.includes("No routes found")
+						) {
+							throw error;
+						}
+						// Some routes cannot honor the next tighter account cap. Keep that
+						// leg's smallest valid build while continuing to compact the others.
+						build = previous;
+					}
+					return {
 						candidate,
-						selection.amountInBaseUnits,
+						amount: selection.amountInBaseUnits,
 						build,
-						new Date(),
-					),
-				});
-			}
+						quote: quoteFromBuild(
+							candidate,
+							selection.amountInBaseUnits,
+							build,
+							new Date(),
+						),
+					};
+				}),
+			);
+			fallbackPrepared = prepared;
 			try {
 				const solanaTransaction = await this.compose(wallet, prepared);
 				const validatedAt = new Date();
@@ -336,10 +344,28 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 				lastRetryableError = error;
 			}
 		}
-		throw lastRetryableError ?? providerError(
-			"BASKET_TOO_LARGE",
-			"The atomic Solana basket exceeds the transaction size limit. Remove one asset and try again.",
+		if (!fallbackPrepared.length) {
+			throw (
+				lastRetryableError ??
+				providerError(
+					"BASKET_TOO_LARGE",
+					"The Solana basket could not be prepared.",
+				)
+			);
+		}
+		// ponytail: one transaction per leg is the reliable fallback; pack later only if measured UX demands it.
+		const solanaTransactions = await Promise.all(
+			fallbackPrepared.map((item) => this.compose(wallet, [item])),
 		);
+		const validatedAt = new Date();
+		return {
+			quotes: fallbackPrepared.map((item) => ({
+				...item.quote,
+				quotedAt: validatedAt.toISOString(),
+				expiresAt: new Date(validatedAt.getTime() + 45_000).toISOString(),
+			})),
+			solanaTransactions,
+		};
 	}
 
 	async prepareExit(
@@ -384,7 +410,8 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		prepared: SolanaPreparedTransaction,
 		signedTransactionBase64: string,
 	): Promise<string> {
-		const currentBlockHeight = await this.connection.getBlockHeight("confirmed");
+		const currentBlockHeight =
+			await this.connection.getBlockHeight("confirmed");
 		if (currentBlockHeight > prepared.lastValidBlockHeight) {
 			throw providerError(
 				"INVALID_TRANSACTION",
@@ -459,8 +486,7 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 				(balances ?? [])
 					.filter((balance) => balance.owner === owner && balance.mint === mint)
 					.reduce(
-						(sum, balance) =>
-							sum + BigInt(balance.uiTokenAmount.amount),
+						(sum, balance) => sum + BigInt(balance.uiTokenAmount.amount),
 						0n,
 					);
 			return (
@@ -470,8 +496,7 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		};
 		return expected.map((item) => {
 			const delta =
-				item.mint ===
-				"So11111111111111111111111111111111111111112"
+				item.mint === "So11111111111111111111111111111111111111112"
 					? BigInt(
 							(transaction.meta?.postBalances[0] ?? 0) -
 								(transaction.meta?.preBalances[0] ?? 0) +
@@ -507,7 +532,8 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		const candidates: Candidate[] = [];
 		for (const assetId of assetIds) {
 			try {
-				let asset = solanaAssetById(assetId) ?? this.discoveredAssets.get(assetId);
+				let asset =
+					solanaAssetById(assetId) ?? this.discoveredAssets.get(assetId);
 				let metadata: JupiterToken | undefined;
 				if (!asset) {
 					const mint = dynamicMintFromAssetId(assetId);
@@ -715,9 +741,7 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 					...(unitLimit
 						? [ComputeBudgetProgram.setComputeUnitLimit({ units: unitLimit })]
 						: []),
-					...(includeProviderCompute
-						? uniqueComputeInstructions.values()
-						: []),
+					...(includeProviderCompute ? uniqueComputeInstructions.values() : []),
 					...instructions,
 				],
 			}).compileToV0Message([...lookupTables.values()]);
@@ -730,7 +754,9 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 			// optional compute-budget program can be the difference between a valid
 			// atomic transaction and one that exceeds 1232 bytes.
 			usesExplicitComputeBudget = false;
-			simulationTransaction = new VersionedTransaction(compile(undefined, false));
+			simulationTransaction = new VersionedTransaction(
+				compile(undefined, false),
+			);
 		}
 		if (
 			simulationTransaction.message.header.numRequiredSignatures !== 1 ||
@@ -769,7 +795,10 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 			);
 		}
 		const consumed = simulation.value.unitsConsumed ?? 1_400_000;
-		const unitLimit = Math.min(1_400_000, Math.max(50_000, Math.ceil(consumed * 1.2)));
+		const unitLimit = Math.min(
+			1_400_000,
+			Math.max(50_000, Math.ceil(consumed * 1.2)),
+		);
 		const transaction = new VersionedTransaction(
 			usesExplicitComputeBudget
 				? compile(unitLimit)
@@ -812,10 +841,15 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		if (!response) {
 			throw providerError("PROVIDER_UNAVAILABLE", "Jupiter did not respond.");
 		}
-		if (!response.ok) throw upstreamError(response.status, await safeText(response));
+		if (!response.ok)
+			throw upstreamError(response.status, await safeText(response));
 		const tokens = (await response.json()) as JupiterToken[];
 		const token = tokens.find((item) => item.id === mint);
-		if (!token) throw providerError("INVALID_TOKEN", "Jupiter token metadata is missing.");
+		if (!token)
+			throw providerError(
+				"INVALID_TOKEN",
+				"Jupiter token metadata is missing.",
+			);
 		this.discoveredMetadata.set(mint, token);
 		return token;
 	}
@@ -824,18 +858,17 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		const curated = Object.values(SOLANA_ASSET_REGISTRY).find(
 			(asset) => asset.address === token.id,
 		);
-		const asset: SolanaAsset =
-			curated ?? {
-				assetId: `sol:mainnet:${token.id}`,
-				symbol: token.symbol,
-				name: token.name,
-				kind:
-					tokenClassification(token) === "TOKENIZED_STOCK"
-						? "STOCK_TOKEN"
-						: "CRYPTO",
-				address: token.id,
-				decimals: token.decimals,
-			};
+		const asset: SolanaAsset = curated ?? {
+			assetId: `sol:mainnet:${token.id}`,
+			symbol: token.symbol,
+			name: token.name,
+			kind:
+				tokenClassification(token) === "TOKENIZED_STOCK"
+					? "STOCK_TOKEN"
+					: "CRYPTO",
+			address: token.id,
+			decimals: token.decimals,
+		};
 		this.discoveredAssets.set(asset.assetId, asset);
 		this.discoveredMetadata.set(asset.address, token);
 		return asset;
@@ -848,26 +881,30 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		const curatedMints = Object.values(SOLANA_ASSET_REGISTRY).map(
 			(asset) => asset.address,
 		);
-		const stable = await Promise.all([
-			this.cachedTokenList(
-				"curated",
-				VERIFIED_CACHE_TTL_MS,
-				`/tokens/v2/search?query=${encodeURIComponent(curatedMints.join(","))}`,
+		const stable = await Promise.all(
+			[
+				this.cachedTokenList(
+					"curated",
+					VERIFIED_CACHE_TTL_MS,
+					`/tokens/v2/search?query=${encodeURIComponent(curatedMints.join(","))}`,
+				),
+				this.cachedTokenList(
+					"tag:verified",
+					VERIFIED_CACHE_TTL_MS,
+					"/tokens/v2/tag?query=verified",
+				),
+				this.cachedTokenList(
+					"tag:lst",
+					VERIFIED_CACHE_TTL_MS,
+					"/tokens/v2/tag?query=lst",
+				),
+			].map((request) =>
+				request.catch((error) => {
+					logProviderError("discovery", error);
+					return [] as JupiterToken[];
+				}),
 			),
-			this.cachedTokenList(
-				"tag:verified",
-				VERIFIED_CACHE_TTL_MS,
-				"/tokens/v2/tag?query=verified",
-			),
-			this.cachedTokenList(
-				"tag:lst",
-				VERIFIED_CACHE_TTL_MS,
-				"/tokens/v2/tag?query=lst",
-			),
-		].map((request) => request.catch((error) => {
-			logProviderError("discovery", error);
-			return [] as JupiterToken[];
-		})));
+		);
 		const dynamicPaths = [
 			"/tokens/v2/toporganicscore/1h?limit=100",
 			"/tokens/v2/toporganicscore/24h?limit=100",
@@ -879,12 +916,14 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		];
 		const dynamic = await Promise.all(
 			dynamicPaths.map((path) =>
-				this.cachedTokenList(`dynamic:${path}`, DYNAMIC_CACHE_TTL_MS, path).catch(
-					(error) => {
-						logProviderError("discovery", error);
-						return [] as JupiterToken[];
-					},
-				),
+				this.cachedTokenList(
+					`dynamic:${path}`,
+					DYNAMIC_CACHE_TTL_MS,
+					path,
+				).catch((error) => {
+					logProviderError("discovery", error);
+					return [] as JupiterToken[];
+				}),
 			),
 		);
 		const curatedMintSet = new Set(
@@ -898,7 +937,8 @@ export class JupiterProvider implements ExecutionProvider, CandidateProvider {
 		}
 		return [...byMint.values()].sort(
 			(left, right) =>
-				Number(curatedMintSet.has(right.id)) - Number(curatedMintSet.has(left.id)) ||
+				Number(curatedMintSet.has(right.id)) -
+					Number(curatedMintSet.has(left.id)) ||
 				Number(right.isVerified === true) - Number(left.isVerified === true) ||
 				(right.organicScore ?? 0) - (left.organicScore ?? 0) ||
 				(right.liquidity ?? 0) - (left.liquidity ?? 0) ||
@@ -973,7 +1013,10 @@ function dynamicMintFromAssetId(assetId: string) {
 	}
 }
 
-function candidateFromAsset(asset: SolanaAsset, metadata: JupiterToken): Candidate {
+function candidateFromAsset(
+	asset: SolanaAsset,
+	metadata: JupiterToken,
+): Candidate {
 	return {
 		chain: "SOLANA",
 		assetId: asset.assetId,
@@ -984,8 +1027,7 @@ function candidateFromAsset(asset: SolanaAsset, metadata: JupiterToken): Candida
 		decimals: asset.decimals,
 		eligible: true,
 		marketHealthy:
-			(metadata.liquidity ?? 0) >= 25_000 &&
-			metadata.audit?.isSus !== true,
+			(metadata.liquidity ?? 0) >= 25_000 && metadata.audit?.isSus !== true,
 		permissionAllowed: metadata.audit?.isSus !== true,
 		marketPriceUsd: metadata.usdPrice,
 		marketDataSource: "jupiter",
@@ -1150,10 +1192,7 @@ function mergeTokenMetadata(
 		audit: { ...(current.audit ?? {}), ...(next.audit ?? {}) },
 		stats24h: { ...(current.stats24h ?? {}), ...(next.stats24h ?? {}) },
 		isVerified: current.isVerified === true || next.isVerified === true,
-		organicScore: Math.max(
-			current.organicScore ?? 0,
-			next.organicScore ?? 0,
-		),
+		organicScore: Math.max(current.organicScore ?? 0, next.organicScore ?? 0),
 		liquidity: Math.max(current.liquidity ?? 0, next.liquidity ?? 0),
 	};
 }
@@ -1210,7 +1249,9 @@ function toInstruction(instruction: JupiterInstruction) {
 }
 
 function positiveInteger(value: unknown): value is string {
-	return typeof value === "string" && /^[0-9]+$/.test(value) && BigInt(value) > 0n;
+	return (
+		typeof value === "string" && /^[0-9]+$/.test(value) && BigInt(value) > 0n
+	);
 }
 
 function isJupiterInsufficientFunds(reason: string) {
@@ -1219,12 +1260,24 @@ function isJupiterInsufficientFunds(reason: string) {
 
 function upstreamError(status: number, reason: string) {
 	if (status === 404 || status === 422) {
-		return providerError("INSUFFICIENT_LIQUIDITY", "No Jupiter route is available.", reason);
+		return providerError(
+			"INSUFFICIENT_LIQUIDITY",
+			"No Jupiter route is available.",
+			reason,
+		);
 	}
 	if (status === 429 || status >= 500) {
-		return providerError("PROVIDER_UNAVAILABLE", "Jupiter is temporarily unavailable.", reason);
+		return providerError(
+			"PROVIDER_UNAVAILABLE",
+			"Jupiter is temporarily unavailable.",
+			reason,
+		);
 	}
-	return providerError("INVALID_TRANSACTION", "Jupiter rejected the swap request.", reason);
+	return providerError(
+		"INVALID_TRANSACTION",
+		"Jupiter rejected the swap request.",
+		reason,
+	);
 }
 
 function providerError(
@@ -1245,7 +1298,9 @@ async function safeText(response: Response) {
 
 function logProviderError(endpoint: string, error: unknown) {
 	const normalized =
-		error instanceof ExecutionProviderError ? error : providerError("PROVIDER_UNAVAILABLE", "Jupiter request failed.");
+		error instanceof ExecutionProviderError
+			? error
+			: providerError("PROVIDER_UNAVAILABLE", "Jupiter request failed.");
 	console.warn(
 		JSON.stringify({
 			event: "execution_provider_error",

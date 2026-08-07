@@ -141,6 +141,7 @@ export interface ExecutionProvider {
 		quotes: Quote[];
 		walletCalls?: WalletCall[];
 		solanaTransaction?: SolanaPreparedTransaction;
+		solanaTransactions?: SolanaPreparedTransaction[];
 		unavailableAssetIds?: string[];
 	}>;
 	health(): Promise<{

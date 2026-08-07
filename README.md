@@ -1,6 +1,6 @@
-# investmade.fun
+# invest4.fun
 
-investmade.fun is a non-custodial, fixed-budget allocation app for Robinhood Chain and Solana. A user selects a chain, sets a daily, weekly, or monthly spending limit, chooses the USDG or USDC amount represented by each decision, receives a ranked asset feed, builds a basket, and explicitly signs the complete basket.
+invest4.fun is a non-custodial, fixed-budget allocation app for Robinhood Chain and Solana. A user selects a chain, sets a daily, weekly, or monthly spending limit, chooses the USDG or USDC amount represented by each decision, receives a ranked asset feed, builds a basket, and explicitly signs the complete basket.
 
 The current product is user-controlled. It does not hold funds, run an autonomous mandate, or let an AI sign transactions. The backend ranks, prepares, and validates. A Privy ERC-4337 smart wallet signs Robinhood operations; the selected Privy-connected Solana wallet signs Solana transactions.
 

@@ -1,4 +1,65 @@
-# Design QA
+# Mobile-first Swipe Card — iPhone 17 Pro
+
+- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-9f53f7ae-c8b1-4973-898f-1c8bdb728372.png` and `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-f3ca1708-a11a-4de6-89ed-585e8c511393.png`
+- Browser implementation screenshots: `/private/tmp/investmade-iphone17-closed.png` and `/private/tmp/investmade-iphone17-details.png`
+- Combined comparison: `/private/tmp/investmade-mobile-comparison.png`
+- Viewport: 402 × 874 CSS px, iPhone 17 Pro reference size
+- Source pixels: 1034 × 1386 closed and 1028 × 1270 details-open
+- Implementation pixels: 503 × 1091 for each state, captured at 1.25 browser density and representing 402 × 874 CSS px
+- Density normalization: the source screenshots document the defects at a wider browser capture; the implementation is judged at the requested device viewport. The paired comparison normalizes each image to its column width and preserves top alignment.
+- State: authenticated Solana basket feed, closed and details-open card states
+
+## Findings
+
+- No actionable P0, P1, or P2 issue remains.
+- P3: the persistent action bar and bottom navigation intentionally remain fixed while the details-open card scrolls behind them; this preserves the mobile conversion controls.
+
+## Full-view comparison
+
+The closed card no longer inherits the 758 px fixed minimum that created the oversized empty panel. At 402 × 874 CSS px it measures 442 px, keeps the full chart readable, and leaves the budget rail and primary actions reachable. The details-open card grows to its content at 624 px rather than holding a large empty tail.
+
+## Focused region comparison
+
+The details-open chart is the focused region because the source showed all four price labels collapsing into one line. The implementation reserves a 150 px chart plot; all four labels have distinct non-overlapping vertical bounds. The timeframe controls, information toggle, evidence panel, and links remain readable without horizontal overflow.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Instrument Serif and DM Sans hierarchy is preserved; no mobile text wraps or truncates unexpectedly in the checked states.
+- Spacing and layout rhythm: the card is content-sized, the closed chart uses `clamp(280px, 39dvh, 340px)`, and details use a dedicated 150 px plot instead of a collapsed flex child.
+- Colors and visual tokens: the existing Solana dark surfaces, mint actions, coral skip state, borders, and muted labels are unchanged.
+- Image quality and asset fidelity: existing provider-backed asset marks and chart SVG output remain sharp; no replacement or placeholder asset was introduced.
+- Copy and content: asset name, price, period, allocation, evidence, budget, and action copy are unchanged.
+
+## Interaction and accessibility checks
+
+- Page identity is `investmade.fun` at `http://localhost:5173/?mobile-card=iphone17`.
+- The meaningful basket screen renders without a Vite/framework overlay.
+- Toggling `Asset information` expands the evidence panel and preserves a 150 px chart plot.
+- Adding SPYx advances to cbBTC and preserves the open information state.
+- Closed state: 442 px card, 340 px chart, no horizontal overflow.
+- Open state: 624 px card, 150 px plot, no overlapping price labels, no horizontal overflow.
+- Persistent actions remain inside the 402 × 874 viewport.
+- Desktop check at 1280 × 900 retains the 505 px desktop minimum and has no horizontal overflow.
+- Console: no errors; only the pre-existing duplicate WalletConnect initialization warning.
+- Typecheck, production build, and `git diff --check` pass.
+
+## Comparison history
+
+1. The source state used a 758 px mobile minimum, producing a large empty card below the chart.
+2. Removed that fixed minimum and made the closed chart viewport-responsive.
+3. The source details-open state collapsed the chart plot, stacking four price labels.
+4. Reserved a 150 px details plot and confirmed label bounds do not overlap.
+5. The final paired comparison shows no remaining P0, P1, or P2 mismatch.
+
+## Follow-up polish
+
+- None required for the requested mobile card states.
+
+final result: passed
+
+---
+
+# Previous Design QA
 
 - Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-9f55e1d3-91e7-46ed-9d4e-a997ce528c93.png`
 - Implementation screenshot: `/private/tmp/investmade-dot-loading-final.png`
@@ -318,5 +379,51 @@ The success hero is large and readable in the full comparison, so a separate cro
 - [x] Amount summary retained
 - [x] Mobile overflow checked
 - [x] Source and implementation compared together
+
+final result: passed
+
+---
+
+# Portfolio Sell Action Labels
+
+- Source visual truth: `/var/folders/dh/xsqhzxxx59x8k29s9rblhz280000gn/T/codex-clipboard-2e5f5c9a-0065-42e6-a503-1aac06c14ec8.png`
+- Rendered implementation: `/private/tmp/investmade-sell-label-mobile.png`
+- Focused comparison: `/private/tmp/investmade-sell-label-comparison.png`
+- Viewport: 455 x 800 CSS px, device scale factor 1
+- Source pixels: 910 x 280 at 2x; normalized to 455 x 140
+- Implementation pixels: 455 x 800 at 1x; the matching two-row region was cropped to 455 x 140
+- State: Robinhood Portfolio with PIPEDOG reverse quote prepared and APLD in its normal sell state
+
+## Full-view comparison evidence
+
+The complete mobile Portfolio capture preserves the existing typography, spacing, colors, token artwork, borders, button dimensions, and responsive layout. The requested action-copy change is isolated to the sell buttons.
+
+## Focused comparison evidence
+
+The side-by-side two-row comparison confirms the intentional changes against the supplied before-state: PIPEDOG now shows plain `Confirm` with no icon, and APLD shows `Sell` followed by the existing hand-coins icon. No focused-region layout regression is visible.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences.
+- Fonts and typography: unchanged from the existing component; both labels retain the same weight, size, and alignment.
+- Spacing and layout rhythm: button sizes and row geometry remain unchanged.
+- Colors and visual tokens: existing sell-button colors, borders, and focus styling are preserved.
+- Image quality and asset fidelity: token artwork is unchanged; the existing Lucide hand-coins icon is reused in the requested position.
+- Copy and content: normal state is `Sell` plus the icon; quoted state is exactly `Confirm`.
+
+## Interaction and console checks
+
+- Opened Portfolio on localhost.
+- Verified six normal `Sell` buttons in the captured state.
+- Prepared a live PIPEDOG reverse quote without submitting a transaction and verified one `Confirm` button.
+- Browser console errors: none.
+
+## Comparison history
+
+- Initial implementation matched the requested copy and icon order; no P0/P1/P2 correction loop was required.
+
+## Follow-up polish
+
+- None required for this scoped change.
 
 final result: passed

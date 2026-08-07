@@ -10,6 +10,7 @@ import type {
 	ExecutionPlan,
 	OnboardingPreferences,
 } from "../src/domain/schemas.js";
+import { SOLANA_USDC_MINT } from "../src/domain/solana.js";
 import { DemoProvider } from "../src/server/adapters/demo.js";
 import type { CandidateProvider } from "../src/server/adapters/types.js";
 import { type AppDependencies, createApp } from "../src/server/app.js";
@@ -60,10 +61,12 @@ function testLocalLiveApp(marketData?: AppDependencies["marketData"]) {
 	});
 }
 
-function providerPreferenceApp(options: {
-	uniswapConfigured?: boolean;
-	includeUniswapAdapter?: boolean;
-} = {}) {
+function providerPreferenceApp(
+	options: {
+		uniswapConfigured?: boolean;
+		includeUniswapAdapter?: boolean;
+	} = {},
+) {
 	const store = new MemoryStateStore();
 	const zeroEx = new DemoProvider("ZERO_EX");
 	const uniswap = new DemoProvider("UNISWAP");
@@ -153,7 +156,9 @@ describe("core API flow", () => {
 			inference: provider,
 			execution: provider,
 			solanaExecutionProviders: { JUPITER: provider },
-			auth: { actor: async () => ({ wallet, txOrigin: wallet, chain: "SOLANA" }) },
+			auth: {
+				actor: async () => ({ wallet, txOrigin: wallet, chain: "SOLANA" }),
+			},
 		});
 
 		await request(app)
@@ -167,6 +172,136 @@ describe("core API flow", () => {
 			})
 			.expect(200)
 			.expect(({ body }) => expect(body.solanaExecutionWallet).toBe(wallet));
+	});
+
+	it("reconciles independently submitted Solana legs as partial", async () => {
+		const wallet = "ENskeWSdXAfqZaDAn3xv7X8CdE88Bb3WQreWGAuk9oyh";
+		const store = new MemoryStateStore();
+		const session = await store.openSession(
+			wallet,
+			"2026-W32",
+			"JUPITER",
+			"SOLANA",
+		);
+		const mints = [
+			"So11111111111111111111111111111111111111112",
+			"JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+		] as const;
+		const assetIds = mints.map((mint) => `sol:mainnet:${mint}`);
+		const solanaTransactions = mints.map((mint, index) => ({
+			kind: "SOLANA_TRANSACTION" as const,
+			unsignedTransactionBase64: `unsigned-${index}`,
+			messageCommitment:
+				`sha256:${String(index + 1).repeat(64)}` as `sha256:${string}`,
+			recentBlockhash: "11111111111111111111111111111111",
+			lastValidBlockHeight: 500,
+			expectedBalanceChanges: [
+				{
+					assetId: assetIds[index] ?? "",
+					mint,
+					minimumAmountOut: "1",
+				},
+			],
+		}));
+		const plan: ExecutionPlan = {
+			executionId: "solana-per-leg-execution",
+			sessionId: session.id,
+			epochId: session.epochId,
+			provider: "JUPITER",
+			chain: "SOLANA",
+			cluster: "mainnet-beta",
+			inputToken: SOLANA_USDC_MINT,
+			signingWallet: wallet,
+			totalInputBaseUnits: "2000000",
+			authorizedPlanHash: `sha256:${"a".repeat(64)}`,
+			policyHash: `sha256:${"b".repeat(64)}`,
+			callCommitments: [],
+			quotes: mints.map((mint, index) => ({
+				requestId: `quote-${index}`,
+				assetId: assetIds[index] ?? "",
+				tokenOut: mint,
+				amountInBaseUnits: "1000000",
+				estimatedAmountOut: "2",
+				minimumAmountOut: "1",
+				unitPriceUsd: "1000000",
+				priceImpactBps: 1,
+				routing: "JUPITER" as const,
+				provider: "JUPITER" as const,
+				chain: "SOLANA" as const,
+				quotedAt: "2026-08-07T12:00:00.000Z",
+				expiresAt: "2026-08-07T12:01:00.000Z",
+			})),
+			solanaTransactions,
+			generatedAt: "2026-08-07T12:00:00.000Z",
+		};
+		await store.reserveExecution(session.id, plan);
+		const provider = Object.assign(new DemoProvider("JUPITER"), {
+			async submitSignedTransaction(_prepared: unknown, signed: string) {
+				if (signed === "reject") throw new Error("preflight failed");
+				return "signature-one";
+			},
+			async transactionStatus() {
+				return { state: "CONFIRMED" as const, slot: 123 };
+			},
+			async reconcileOutputs(
+				signature: string,
+				_wallet: string,
+				expected: (typeof solanaTransactions)[number]["expectedBalanceChanges"],
+			) {
+				return expected.map((change) => ({
+					assetId: change.assetId,
+					amountOutBaseUnits: "2",
+					transactionHash: signature,
+					blockNumber: "123",
+					status: "success" as const,
+				}));
+			},
+		});
+		const app = createApp({
+			config: loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "true",
+				LOCAL_LIVE_EXECUTION: "true",
+				PUBLIC_ORIGIN: "http://localhost:5173",
+				SESSION_SECRET: "test-secret-that-is-at-least-32-characters",
+				PRIVY_APP_ID: "test-privy-app-id",
+				PRIVY_APP_SECRET: "test-privy-app-secret",
+				ZERO_EX_API_KEY: "test-0x-key",
+				JUPITER_API_KEY: "test-jupiter-key",
+				SOLANA_RPC_URL: "https://solana.example.test",
+				SOLANA_WS_URL: "wss://solana.example.test",
+			}),
+			store,
+			candidates: provider,
+			inference: provider,
+			execution: provider,
+			solanaExecutionProviders: { JUPITER: provider },
+			auth: {
+				actor: async () => ({ wallet, txOrigin: wallet, chain: "SOLANA" }),
+			},
+		});
+
+		const submitted = await request(app)
+			.post(`/api/executions/${plan.executionId}/submitted`)
+			.set(authenticated)
+			.send({ signedTransactions: ["signed-one", "reject"] })
+			.expect(200);
+		expect(submitted.body).toMatchObject({
+			status: "SUBMITTED",
+			submissionMode: "SEQUENTIAL",
+			transactionHashes: ["signature-one", ""],
+		});
+
+		const reconciled = await request(app)
+			.post(`/api/executions/${plan.executionId}/reconcile`)
+			.set(authenticated)
+			.expect(200);
+		expect(reconciled.body.status).toBe("PARTIAL");
+		expect(
+			reconciled.body.settledOutputs.map(
+				(output: { status: string }) => output.status,
+			),
+		).toEqual(["success", "failed"]);
 	});
 
 	it("rejects a Solana basket before routing when USDC is insufficient", async () => {
@@ -256,8 +391,7 @@ describe("core API flow", () => {
 			.expect(({ body }) =>
 				expect(body).toEqual({
 					error: "INSUFFICIENT_FUNDS",
-					message:
-						"Basket requires 0.5 USDC, but this wallet has 0.3 USDC.",
+					message: "Basket requires 0.5 USDC, but this wallet has 0.3 USDC.",
 				}),
 			);
 		expect(candidatesRequested).toBe(false);
@@ -381,8 +515,7 @@ describe("core API flow", () => {
 					priceUsd: 100,
 				}),
 				expect.objectContaining({
-					assetId:
-						"sol:mainnet:98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g",
+					assetId: "sol:mainnet:98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g",
 					symbol: "HYPE",
 					balanceBaseUnits: "1000000",
 				}),
@@ -897,9 +1030,7 @@ describe("core API flow", () => {
 			})
 			.expect(200);
 
-		expect(refreshed.body.plan.executionId).toBe(
-			initial.body.plan.executionId,
-		);
+		expect(refreshed.body.plan.executionId).toBe(initial.body.plan.executionId);
 		expect(refreshed.body.plan.authorizedPlanHash).not.toBe(
 			initial.body.plan.authorizedPlanHash,
 		);

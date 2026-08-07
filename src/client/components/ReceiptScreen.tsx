@@ -1,4 +1,5 @@
 import {
+	BriefcaseBusiness,
 	ChevronDown,
 	ExternalLink,
 	FileText,
@@ -65,6 +66,7 @@ export function ReceiptScreen({
 		demoMode,
 		chainLabel,
 		providerLabel,
+		record.submissionMode,
 	);
 	const outputsByAssetId = new Map(
 		record.settledOutputs.map((output) => [output.assetId, output]),
@@ -122,18 +124,6 @@ export function ReceiptScreen({
 					<p>{receiptDescription}</p>
 				</div>
 			</header>
-			<div
-				className={`receipt-verification ${isPending ? "pending" : record.status === "FAILED" ? "failed" : ""}`}
-			>
-				{isPending ? <LoaderCircle /> : <Check />}
-				<b>
-					{isSettled
-						? demoMode
-							? "Verified local simulation"
-							: `Verified on ${chainLabel}`
-						: `${record.status.toLowerCase()} on ${chainLabel}`}
-				</b>
-			</div>
 			<section className="receipt-ledger">
 				<h2>What you bought</h2>
 				{selected.map((candidate) => {
@@ -175,9 +165,7 @@ export function ReceiptScreen({
 											: "receipt-output status-pending"
 								}
 								title={
-									fullOutput
-										? `${fullOutput} ${candidate.symbol}`
-										: undefined
+									fullOutput ? `${fullOutput} ${candidate.symbol}` : undefined
 								}
 							>
 								{isSuccess && output && fullOutput ? (
@@ -201,10 +189,22 @@ export function ReceiptScreen({
 				{!selected.length ? (
 					<p className="receipt-missing-snapshot">
 						The operation is preserved, but its local card snapshot is
-						unavailable. Open the transaction receipt for the canonical
-						onchain details.
+						unavailable. Open the transaction receipt for the canonical onchain
+						details.
 					</p>
 				) : null}
+				<div
+					className={`receipt-verification ${isPending ? "pending" : record.status === "FAILED" ? "failed" : ""}`}
+				>
+					{isPending ? <LoaderCircle /> : <Check />}
+					<b>
+						{isSettled
+							? demoMode
+								? "Verified local simulation"
+								: `Verified on ${chainLabel}`
+							: `${record.status.toLowerCase()} on ${chainLabel}`}
+					</b>
+				</div>
 				{record.settledAt ? (
 					<p className="receipt-captured-at">
 						Settled {formatSettledAt(record.settledAt)}
@@ -276,12 +276,12 @@ export function ReceiptScreen({
 								</a>
 							</div>
 						) : null}
-						<div
-							className={demoMode ? "demo-disclosure" : "live-disclosure"}
-						>
+						<div className={demoMode ? "demo-disclosure" : "live-disclosure"}>
 							{demoMode
 								? "This receipt is local demo evidence. It is not mainnet settlement proof."
-								: `Live settlement is verified from the atomic ${chainLabel} operation and output-token transfers to your Investmade Wallet.`}
+								: record.submissionMode === "BATCH"
+									? `Live settlement is verified from the atomic ${chainLabel} operation and output-token transfers to your Investmade Wallet.`
+									: `Live settlement is verified per ${chainLabel} transaction and output-token transfer to your Investmade Wallet.`}
 						</div>
 					</div>
 				</details>
@@ -324,7 +324,7 @@ export function ReceiptScreen({
 						className="button button-primary"
 						onClick={onViewPortfolio}
 					>
-						See my portfolio
+						See my portfolio <BriefcaseBusiness aria-hidden="true" />
 					</button>
 				) : null}
 				<button
@@ -417,11 +417,15 @@ function receiptCopy(
 	demoMode: boolean,
 	chainLabel: string,
 	providerLabel: string,
+	submissionMode: ExecutionRecord["submissionMode"],
 ) {
 	if (status === "SUBMITTED") {
 		return {
 			title: "Basket submitted",
-			description: `Your Investmade Wallet broadcast one atomic operation. Waiting for ${chainLabel} settlement.`,
+			description:
+				submissionMode === "BATCH"
+					? `Your Investmade Wallet broadcast one atomic operation. Waiting for ${chainLabel} settlement.`
+					: `Your Investmade Wallet broadcast independent swaps. Waiting for ${chainLabel} settlement.`,
 		};
 	}
 	if (status === "SETTLED") {
@@ -432,7 +436,7 @@ function receiptCopy(
 				}
 			: {
 					title: "Basket settled",
-					description: `All ${totalLegs} legs reached a verified terminal state on Robinhood Chain.`,
+					description: `All ${totalLegs} legs reached a verified terminal state on ${chainLabel}.`,
 				};
 	}
 	if (status === "PARTIAL") {

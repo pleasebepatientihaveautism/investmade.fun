@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CircleHelp } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { visibleAssetTags } from "../../domain/asset-tag-config";
 import type { Candidate } from "../../domain/schemas";
 import {
@@ -23,7 +23,7 @@ import {
 	historySpanSeconds,
 	isHistoryPeriodAvailable,
 } from "../chart-history";
-import { formatUsdPrice } from "../price-format";
+import { formatChartAxisUsdPrice, formatUsdPrice } from "../price-format";
 import { AssetMark } from "./AssetMark";
 
 const SWIPE_THRESHOLD_PX = 72;
@@ -151,21 +151,24 @@ function ChartShape({
 function PriceSparkline({
 	candidate,
 	reason,
+	infoOpen,
+	onInfoOpenChange,
 }: {
 	candidate: Candidate;
 	reason: string;
+	infoOpen: boolean;
+	onInfoOpenChange: (open: boolean) => void;
 }) {
 	const [period, setPeriod] = useState<HistoryPeriod>("1M");
 	const [history, setHistory] = useState<AssetHistoryResponse>();
 	const [coverageHistory, setCoverageHistory] =
 		useState<AssetHistoryResponse>();
 	const [retryCount, setRetryCount] = useState(0);
-	const [reasonOpen, setReasonOpen] = useState(false);
 	const [details, setDetails] = useState<AssetDetailsResponse>();
 	const [detailsFailed, setDetailsFailed] = useState(false);
 
 	useEffect(() => {
-		if (!reasonOpen || details || detailsFailed) return;
+		if (!infoOpen || details || detailsFailed) return;
 		let active = true;
 		void api
 			.assetDetails(candidate.assetId)
@@ -174,7 +177,7 @@ function PriceSparkline({
 		return () => {
 			active = false;
 		};
-	}, [candidate.assetId, details, detailsFailed, reasonOpen]);
+	}, [candidate.assetId, details, detailsFailed, infoOpen]);
 
 	useEffect(() => {
 		let active = true;
@@ -267,7 +270,7 @@ function PriceSparkline({
 
 	return (
 		<div
-			className={`price-chart${change < 0 ? " is-down" : ""}${reasonOpen ? " has-info" : ""}`}
+			className={`price-chart${change < 0 ? " is-down" : ""}${infoOpen ? " has-info" : ""}`}
 		>
 			<div className={`chart-meta${isNewToken ? " has-coverage" : ""}`}>
 				<strong>{formatUsdPrice(candidate.marketPriceUsd ?? 0)}</strong>
@@ -327,7 +330,7 @@ function PriceSparkline({
 						<div className="chart-prices" aria-hidden="true">
 							{CHART_TICK_Y.map((y, index) => (
 								<span style={{ top: `${(y / 32) * 100}%` }} key={y}>
-									{formatUsdPrice(priceTicks[index] ?? 0)}
+									{formatChartAxisUsdPrice(priceTicks[index] ?? 0)}
 								</span>
 							))}
 						</div>
@@ -378,13 +381,13 @@ function PriceSparkline({
 					type="button"
 					className="chart-reason-toggle"
 					aria-label="Asset information"
-					aria-expanded={reasonOpen}
-					onClick={() => setReasonOpen((open) => !open)}
+					aria-expanded={infoOpen}
+					onClick={() => onInfoOpenChange(!infoOpen)}
 				>
 					<CircleHelp aria-hidden="true" />
 				</button>
 			</div>
-			{reasonOpen ? (
+			{infoOpen ? (
 				<div className="asset-info-panel" aria-live="polite">
 					{!details && !detailsFailed ? (
 						<p className="asset-info-status">Loading CoinGecko details…</p>
@@ -527,6 +530,8 @@ export function SwipeCard({
 	ticketSizeUsd,
 	stableToken,
 	feedback,
+	infoOpen,
+	onInfoOpenChange,
 	onSwipe,
 }: {
 	candidate: Candidate;
@@ -534,6 +539,8 @@ export function SwipeCard({
 	ticketSizeUsd: number;
 	stableToken: "USDG" | "USDC";
 	feedback?: DecisionFeedback;
+	infoOpen: boolean;
+	onInfoOpenChange: (open: boolean) => void;
 	onSwipe: (add: boolean) => void;
 }) {
 	const pointerStart = useRef<{ id: number; x: number } | undefined>(undefined);
@@ -608,6 +615,8 @@ export function SwipeCard({
 				key={candidate.assetId}
 				candidate={candidate}
 				reason={reason}
+				infoOpen={infoOpen}
+				onInfoOpenChange={onInfoOpenChange}
 			/>
 		</article>
 	);

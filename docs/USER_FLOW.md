@@ -4,7 +4,7 @@ This document describes the user-visible flow implemented in the current codebas
 
 ## Navigation model
 
-Before onboarding completes, the header exposes the investmade.fun home action and Privy wallet connection. After authentication and plan activation, the primary navigation contains:
+Before onboarding completes, the header exposes the invest4.fun home action and Privy wallet connection. After authentication and plan activation, the primary navigation contains:
 
 - **Basket** — ranked cards, selected budget, and basket review.
 - **Portfolio** — Alchemy-indexed wallet balances, available price context, and supported exits.

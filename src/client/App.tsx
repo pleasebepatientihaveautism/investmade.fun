@@ -1,15 +1,16 @@
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import {
-	useWallets as useSolanaWallets,
-	type ConnectedStandardSolanaWallet,
-} from "@privy-io/react-auth/solana";
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets";
+import {
+	type ConnectedStandardSolanaWallet,
+	useWallets as useSolanaWallets,
+} from "@privy-io/react-auth/solana";
 import {
 	ArrowLeft,
 	Bot,
 	ChevronLeft,
 	ChevronRight,
 	ArrowRight as LucideArrowRight,
+	ShoppingBasket,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -35,7 +36,7 @@ import {
 import { AccountScreen } from "./components/AccountScreen";
 import { AppShell } from "./components/AppShell";
 import { AssetIconProvider } from "./components/AssetMark";
-import { BudgetRail } from "./components/BudgetRail";
+import { BudgetRail, BudgetSummary } from "./components/BudgetRail";
 import { ArrowRight } from "./components/Icons";
 import { Confetti } from "./components/magicui/confetti";
 import { Onboarding } from "./components/Onboarding";
@@ -53,6 +54,7 @@ type Stage = "loading" | "onboarding" | "swipe" | "review";
 type DecisionFeedback = "invest" | "skip";
 const LAST_EXECUTION_KEY = "investmade:last-execution";
 const LAST_EXECUTION_CANDIDATES_KEY = "investmade:last-execution-candidates";
+const FEED_RETRY_DELAY_MS = 900;
 
 function rememberWarnings(
 	target: Map<string, string[]>,
@@ -60,6 +62,31 @@ function rememberWarnings(
 ) {
 	for (const candidate of response.candidates) {
 		target.set(candidate.assetId, response.feed.warnings);
+	}
+}
+
+function shouldRetryFeed(error: unknown) {
+	return !(
+		error instanceof ApiError &&
+		[
+			"AUTH_REQUIRED",
+			"EXECUTION_PROVIDER_CHANGED",
+			"INVALID_REQUEST",
+			"SESSION_NOT_FOUND",
+		].includes(error.code)
+	);
+}
+
+async function generateFeedWithRetry(
+	sessionId: string,
+	preferences: OnboardingPreferences,
+) {
+	try {
+		return await api.generateFeed(sessionId, preferences);
+	} catch (error) {
+		if (!shouldRetryFeed(error)) throw error;
+		await new Promise((resolve) => window.setTimeout(resolve, FEED_RETRY_DELAY_MS));
+		return api.generateFeed(sessionId, preferences);
 	}
 }
 
@@ -101,6 +128,7 @@ export function App({ config }: { config: PublicConfig }) {
 	const [preferences, setPreferences] = useState<OnboardingPreferences>();
 	const [index, setIndex] = useState(0);
 	const [selectedIds, setSelectedIds] = useState<string[]>([]);
+	const [assetInfoOpen, setAssetInfoOpen] = useState(false);
 	const [settlement, setSettlement] = useState<ExecutionRecord>();
 	const [receiptCandidates, setReceiptCandidates] = useState<Candidate[]>([]);
 	const [error, setError] = useState("");
@@ -225,7 +253,7 @@ export function App({ config }: { config: PublicConfig }) {
 						: undefined,
 				]);
 				const generated =
-					prefetched ?? (await api.generateFeed(opened.id, preferences));
+					prefetched ?? (await generateFeedWithRetry(opened.id, preferences));
 				await minimumLoader;
 				prefetchedFeed.current = undefined;
 				rememberWarnings(warningsByAssetId.current, generated);
@@ -324,14 +352,7 @@ export function App({ config }: { config: PublicConfig }) {
 	const periodLimitUsd = preferences?.periodLimitUsd ?? 100;
 	const selectedTotalUsd = selected.length * ticketSizeUsd;
 	const stableToken = activeChain === "SOLANA" ? "USDC" : "USDG";
-	const executionProviderLabel =
-		preferences?.executionProvider === "JUPITER"
-			? "Jupiter"
-			: preferences?.executionProvider === "UNISWAP"
-				? "Uniswap"
-				: "0x";
-	const canAddCurrent =
-		selectedTotalUsd + ticketSizeUsd <= periodLimitUsd;
+	const canAddCurrent = selectedTotalUsd + ticketSizeUsd <= periodLimitUsd;
 
 	useEffect(() => {
 		if (!nextAssetId) return;
@@ -493,7 +514,8 @@ export function App({ config }: { config: PublicConfig }) {
 			const next: OnboardingPreferences = {
 				...preferences,
 				activeChain: chain,
-				executionProvider: chain === "SOLANA" ? solanaProvider : robinhoodProvider,
+				executionProvider:
+					chain === "SOLANA" ? solanaProvider : robinhoodProvider,
 				robinhoodExecutionProvider: robinhoodProvider,
 				solanaExecutionProvider: solanaProvider,
 				solanaExecutionWallet:
@@ -691,19 +713,18 @@ export function App({ config }: { config: PublicConfig }) {
 							<header className="page-heading">
 								<h1>Build your basket</h1>
 								<p>Swipe right to add left to skip.</p>
-								{config.executionMode === "local-live" ? (
-									<p>
-										<b>Live signing enabled.</b> Real {stableToken} → asset{" "}
-										{executionProviderLabel} quote; ranking evidence is
-										local-only.
-									</p>
-								) : null}
 							</header>
 							{error ? (
 								<div className="fatal-state">
 									<h2>Session unavailable</h2>
 									<p>{error}</p>
-									<button type="button" onClick={() => location.reload()}>
+									<button
+										type="button"
+										onClick={() => {
+											if (preferences) void loadSession(preferences);
+										}}
+										disabled={!preferences}
+									>
 										Try again
 									</button>
 								</div>
@@ -758,6 +779,8 @@ export function App({ config }: { config: PublicConfig }) {
 											ticketSizeUsd={ticketSizeUsd}
 											stableToken={stableToken}
 											feedback={decisionFeedback}
+											infoOpen={assetInfoOpen}
+											onInfoOpenChange={setAssetInfoOpen}
 											onSwipe={animateDecision}
 										/>
 										<button
@@ -783,6 +806,13 @@ export function App({ config }: { config: PublicConfig }) {
 											</ul>
 										</aside>
 									) : null}
+									<BudgetSummary
+										selectedCount={selected.length}
+										ticketSizeUsd={ticketSizeUsd}
+										periodLimitUsd={periodLimitUsd}
+										activeChain={activeChain}
+										className="mobile-budget-summary"
+									/>
 									<div
 										className={`card-actions${selected.length ? " has-selection" : ""}`}
 									>
@@ -796,15 +826,6 @@ export function App({ config }: { config: PublicConfig }) {
 										</button>
 										<button
 											type="button"
-											className="button button-primary"
-											onClick={() => animateDecision(true)}
-											disabled={Boolean(decisionFeedback) || !canAddCurrent}
-										>
-											Add {ticketSizeUsd} {stableToken}{" "}
-											<ChevronRight aria-hidden="true" />
-										</button>
-										<button
-											type="button"
 											className="button button-outline"
 											onClick={() => {
 												scrollToTop();
@@ -812,7 +833,16 @@ export function App({ config }: { config: PublicConfig }) {
 											}}
 											disabled={!selected.length}
 										>
-											Review basket ({selected.length}) <ArrowRight />
+											Review basket ({selected.length}) <ShoppingBasket />
+										</button>
+										<button
+											type="button"
+											className="button button-primary"
+											onClick={() => animateDecision(true)}
+											disabled={Boolean(decisionFeedback) || !canAddCurrent}
+										>
+											Add {ticketSizeUsd} {stableToken}{" "}
+											<ChevronRight aria-hidden="true" />
 										</button>
 									</div>
 								</>
@@ -854,7 +884,7 @@ export function App({ config }: { config: PublicConfig }) {
 											setStage("review");
 										}}
 									>
-										Review basket ({selected.length}) <ArrowRight />
+										Review basket ({selected.length}) <ShoppingBasket />
 									</button>
 								</div>
 							)}
