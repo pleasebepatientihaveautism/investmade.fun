@@ -37,6 +37,10 @@ interface ExecutionRow {
   settled_at: Date | null;
 }
 
+export function normalizeStoredWallet(wallet: string, chain: AppChain) {
+  return chain === "ROBINHOOD" ? wallet.toLowerCase() : wallet;
+}
+
 export class PostgresStateStore implements StateStore {
   private readonly pool: Pool;
 
@@ -110,7 +114,12 @@ export class PostgresStateStore implements StateStore {
            execution_provider = EXCLUDED.execution_provider,
            preferences = EXCLUDED.preferences,
            updated_at = now()`,
-      [wallet.toLowerCase(), ownerId.toLowerCase(), parsed.executionProvider, JSON.stringify(parsed)]
+      [
+        normalizeStoredWallet(wallet, parsed.activeChain),
+        ownerId.toLowerCase(),
+        parsed.executionProvider,
+        JSON.stringify(parsed)
+      ]
     );
     return parsed;
   }
@@ -159,8 +168,7 @@ export class PostgresStateStore implements StateStore {
     ownerId = wallet,
     feedRankingProvider: FeedRankingProviderId = "ZERO_G"
   ): Promise<WeeklySession> {
-    const normalizedWallet =
-      chain === "ROBINHOOD" ? wallet.toLowerCase() : wallet;
+    const normalizedWallet = normalizeStoredWallet(wallet, chain);
     const result = await this.pool.query<SessionRow>(
       `INSERT INTO weekly_sessions (
          wallet, owner_id, epoch_id, chain, execution_provider, feed_ranking_provider, status
