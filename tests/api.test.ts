@@ -1,5 +1,5 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ASSET_REGISTRY } from "../src/domain/constants.js";
 import {
 	fillFeedPage,
@@ -172,6 +172,58 @@ describe("core API flow", () => {
 			})
 			.expect(200)
 			.expect(({ body }) => expect(body.solanaExecutionWallet).toBe(wallet));
+	});
+
+	it("does not expose unexpected database errors to the client", async () => {
+		class FailingPreferencesStore extends MemoryStateStore {
+			override async setPreferences(): Promise<OnboardingPreferences> {
+				throw new Error(
+					'new row for relation "user_preferences" violates check constraint "user_preferences_wallet_check"',
+				);
+			}
+		}
+		const provider = new DemoProvider();
+		const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const app = createApp({
+			config: loadConfig({
+				NODE_ENV: "test",
+				INVESTMADE_DEMO_MODE: "true",
+				PUBLIC_ORIGIN: "http://localhost:5173",
+				SESSION_SECRET: "test-secret-that-is-at-least-32-characters",
+				PRIVY_APP_ID: "test-privy-app-id",
+				PRIVY_APP_SECRET: "test-privy-app-secret",
+			}),
+			store: new FailingPreferencesStore(),
+			candidates: provider,
+			inference: provider,
+			execution: provider,
+			auth: {
+				actor: async () => ({
+					wallet: "0x71f30000000000000000000000000000000009a2",
+					txOrigin: "0x71f30000000000000000000000000000000009a3",
+				}),
+			},
+		});
+
+		try {
+			await request(app)
+				.post("/api/preferences")
+				.set(authenticated)
+				.send(onboardingPreferences)
+				.expect(500)
+				.expect(({ body }) => {
+					expect(body).toEqual({
+						error: "REQUEST_FAILED",
+						message: "The request could not be completed. Please try again.",
+					});
+					expect(JSON.stringify(body)).not.toContain("user_preferences");
+				});
+			expect(errorLog).toHaveBeenCalledWith(
+				expect.stringContaining('"event":"request_failed"'),
+			);
+		} finally {
+			errorLog.mockRestore();
+		}
 	});
 
 	it("reconciles independently submitted Solana legs as partial", async () => {

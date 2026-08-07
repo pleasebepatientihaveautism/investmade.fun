@@ -1833,7 +1833,7 @@ export function createApp(deps: AppDependencies) {
 	app.use(
 		(
 			error: unknown,
-			_request: Request,
+			request: Request,
 			response: Response,
 			_next: NextFunction,
 		) => {
@@ -1853,12 +1853,22 @@ export function createApp(deps: AppDependencies) {
 				});
 				return;
 			}
-			const known = error instanceof PolicyError || error instanceof Error;
-			const code = error instanceof PolicyError ? error.code : "REQUEST_FAILED";
-			const message = known ? (error as Error).message : "Unexpected error";
-			response
-				.status(error instanceof PolicyError ? 422 : 400)
-				.json({ error: code, message });
+			if (error instanceof PolicyError) {
+				response.status(422).json({ error: error.code, message: error.message });
+				return;
+			}
+			console.error(
+				JSON.stringify({
+					event: "request_failed",
+					method: request.method,
+					path: request.path,
+					error: error instanceof Error ? error.message : String(error),
+				}),
+			);
+			response.status(500).json({
+				error: "REQUEST_FAILED",
+				message: "The request could not be completed. Please try again.",
+			});
 		},
 	);
 	return app;
