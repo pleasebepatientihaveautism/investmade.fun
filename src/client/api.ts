@@ -252,10 +252,13 @@ export function configureApiAuth(provider: typeof authProvider) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-	const token = await authProvider?.getAccessToken();
-	const wallet = authProvider?.getWalletAddress();
-	const txOrigin = authProvider?.getTxOriginAddress();
-	const chain = authProvider?.getWalletChain() ?? "ROBINHOOD";
+	// Keep every auth field from one provider snapshot. React may switch the
+	// active chain while Privy is asynchronously resolving the access token.
+	const requestAuthProvider = authProvider;
+	const token = await requestAuthProvider?.getAccessToken();
+	const wallet = requestAuthProvider?.getWalletAddress();
+	const txOrigin = requestAuthProvider?.getTxOriginAddress();
+	const chain = requestAuthProvider?.getWalletChain() ?? "ROBINHOOD";
 	const response = await fetch(path, {
 		...init,
 		headers: {
